@@ -35,13 +35,12 @@ docker exec benchmark-kafka kafka-topics --describe \
 
 echo ""
 echo "--- Step 2b: Installing producer deps ---"
-cd "$BASEDIR/producer"
-npm install --silent
+npm install --silent --prefix "$BASEDIR/producer"
 
 echo ""
 echo "--- Step 3: Starting gRPC servers ---"
-cd "$BASEDIR/grpc-server"
-docker compose up -d --build
+cd "$BASEDIR/grpc-server" && docker compose up -d --build
+cd "$BASEDIR"
 echo "Waiting 10s for gRPC containers..."
 sleep 10
 
@@ -54,11 +53,11 @@ if ! pm2 describe ws-benchmark &>/dev/null; then
   echo "Waiting 5s for WS workers..."
   sleep 5
 fi
+cd "$BASEDIR"
 
 echo ""
 echo "--- Step 5: Installing benchmark client deps ---"
-cd "$BASEDIR/benchmark-client"
-npm install --silent
+npm install --silent --prefix "$BASEDIR/benchmark-client"
 
 echo ""
 echo "--- Step 6: Running health check ---"

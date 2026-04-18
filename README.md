@@ -1,0 +1,162 @@
+# WS vs gRPC Latency Benchmark
+
+So sánh latency p50/p99 giữa PM2 WebSocket cluster (host) và gRPC Docker containers (bridge network). Cả hai đều consume từ cùng một Kafka topic.
+
+## Architecture
+
+```
+                        HOST
+  ┌──────────────┐    ┌──────────────────────┐
+  │ Kafka Producer│    │  Benchmark Client    │
+  │ 100 msg/s 1KB │    │  3 WS + 3 gRPC      │
+  └──────┬───────┘    │  hdr-histogram       │
+         │            └──┬───┬──┬──┬──┬──────┘
+         ▼               │   │  │  │  │
+   ┌───────────┐         │   │  │  │  │
+   │ Kafka     │         │   │  │  │  │
+   │ :9092     │         │   │  │  │  │
+   └─────┬─────┘         │   │  │  │  │
+         │               │   │  │  │  │
+  ┌──────┴──────┐       │   │  │  │  │
+  │ PM2 WS      │◄──────┘   │  │  │  │
+  │ 3 workers   │           │  │  │  │
+  │ :8080       │           │  │  │  │
+  └─────────────┘           │  │  │  │
+                            │  │  │  │
+  ┌──── Docker ─────────────┘  │  │  │
+  │  grpc-net + kafka-net      │  │  │
+  │                            │  │  │
+  │  ┌─────┐ ┌─────┐ ┌─────┐ │  │  │
+  │  │ctr-1│ │ctr-2│ │ctr-3│ │  │  │
+  │  │:510 │ │:510 │ │:510 │ │  │  │
+  │  └──┬──┘ └──┬──┘ └──┬──┘ │  │  │
+  │     └───────┴───────┘    │  │  │
+  └───────────────────────────┘  │  │
+       :50051 :50052 :50053 ◄────┘  │
+                             ◄──────┘
+```
+
+## Quick Start
+
+```bash
+# Chạy full benchmark (tự động start Kafka, gRPC, WS, producer)
+./run-benchmark.sh
+```
+
+Script tự động:
+1. Start Kafka + Zookeeper (Docker)
+2. Tạo topic `benchmark-messages` (1 partition)
+3. Start 3 gRPC containers (bridge network)
+4. Start 3 PM2 WS workers (cluster mode)
+5. Health check tất cả endpoints
+6. Chạy 3 lần benchmark (60s warmup + 5min đo mỗi lần)
+7. Thu thập kết quả vào `results/`
+
+## Manual Step-by-Step
+
+```bash
+# 1. Start Kafka
+cd infra && docker compose up -d
+sleep 15
+docker exec benchmark-kafka kafka-topics --create \
+  --topic benchmark-messages --partitions 1 --replication-factor 1 \
+  --if-not-exists --bootstrap-server localhost:9092
+
+# 2. Start gRPC servers
+cd grpc-server && docker compose up -d --build
+sleep 10
+
+# 3. Start WS servers
+cd ws-server && npm install && pm2 start ecosystem.config.js
+sleep 5
+
+# 4. Start producer (background)
+cd producer && npm install && KAFKAJS_NO_PARTITIONER_WARNING=1 node producer.js &
+
+# 5. Run benchmark client
+cd benchmark-client && npm install
+node client.js --warmup 60 --duration 300
+
+# 6. Cleanup
+pm2 delete ws-benchmark
+cd ../grpc-server && docker compose down
+cd ../infra && docker compose down
+```
+
+## Project Structure
+
+```
+├── infra/                   # Kafka + Zookeeper (Docker Compose)
+│   └── docker-compose.yml
+├── proto/                   # Shared gRPC proto
+│   └── benchmark.proto
+├── producer/                # Kafka producer (100 msg/s, 1KB JSON)
+│   ├── package.json
+│   └── producer.js
+├── ws-server/               # PM2 WebSocket cluster (3 workers)
+│   ├── package.json
+│   ├── server.js
+│   └── ecosystem.config.js
+├── grpc-server/             # gRPC Docker containers (3x)
+│   ├── package.json
+│   ├── server.js
+│   ├── Dockerfile
+│   └── docker-compose.yml
+├── benchmark-client/        # Benchmark client (6 connections, hdr-histogram)
+│   ├── package.json
+│   ├── client.js
+│   └── proto/
+│       └── benchmark.proto
+├── results/                 # Benchmark output logs
+├── health-check.sh          # Verify all services running
+└── run-benchmark.sh         # One-command benchmark runner
+```
+
+## Approach
+
+**Approach B: Unique Consumer Groups** — Mỗi consumer (3 WS workers + 3 gRPC containers) dùng unique consumer group trên 1 partition Kafka. Mỗi consumer nhận tất cả messages. So sánh latency cho cùng một message giữa WS và gRPC.
+
+## Benchmark Results
+
+**Environment**: macOS, Docker Desktop, Node v22.13.0, 100 msg/s, ~1KB JSON, 60s warmup + 300s measurement
+
+```
+╔══════════╦══════════════╦══════════════╦════════════╗
+║ Pctl     ║ WS (ms)      ║ gRPC (ms)    ║ Delta (ms) ║
+╠══════════╬══════════════╬══════════════╬════════════╣
+║      p50 ║        0.001 ║        0.002 ║     +0.001 ║
+║      p75 ║        0.002 ║        0.003 ║     +0.001 ║
+║      p90 ║        0.003 ║        0.004 ║     +0.001 ║
+║      p95 ║        0.003 ║        0.004 ║     +0.001 ║
+║      p99 ║        0.005 ║        0.006 ║     +0.001 ║
+║    p99.9 ║        0.016 ║        0.016 ║     -0.000 ║
+╚══════════╩══════════════╩══════════════╩════════════╝
+
+Per-endpoint breakdown:
+  WS #1:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
+  WS #2:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
+  WS #3:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
+  gRPC #1:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.015
+  gRPC #2:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.016
+  gRPC #3:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.016
+
+Event loop lag: p50=0.00ms, p99=0.00ms, max=0.00ms
+Total messages: 177744
+```
+
+**Key findings**:
+- gRPC (Docker bridge) chậm hơn WS (host) khoảng **+0.001ms** ở mọi percentile
+- Ở p99.9, cả hai gần như bằng nhau (~0.016ms)
+- Docker bridge network overhead rất nhỏ ở workload thấp (100 msg/s, 1KB)
+
+## Tech Stack
+
+| Component | Tech |
+|-----------|------|
+| WS server | `ws` ^8.x |
+| gRPC server | `@grpc/grpc-js` ^1.12 |
+| Kafka client | `kafkajs` ^2.x |
+| Histogram | `hdr-histogram-js` ^3.x |
+| Process manager | PM2 ^5.x |
+| Containers | Docker Compose v2 |
+| Node.js | 20 LTS |

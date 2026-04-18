@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+results/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# PM2
+.pm2/
+
+# Docker
+*.tar
+
+# Coverage
+coverage/
+.nyc_output/
