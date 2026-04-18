@@ -1,0 +1,99 @@
+const grpc = require("@grpc/grpc-js");
+const protoLoader = require("@grpc/proto-loader");
+const { Kafka } = require("kafkajs");
+
+const PROTO_PATH = "/app/proto/benchmark.proto";
+const BROKER = process.env.KAFKA_BROKER || "host.docker.internal:9092";
+const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
+const CONTAINER_ID = process.env.CONTAINER_ID || "default";
+const GROUP_ID = `grpc-benchmark-${CONTAINER_ID}`;
+const PORT = 50051;
+
+const packageDef = protoLoader.loadSync(PROTO_PATH, {
+  keepCase: true,
+  longs: String,
+  enums: String,
+  defaults: true,
+  oneofs: true,
+});
+const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
+
+const kafka = new Kafka({
+  clientId: `grpc-server-${CONTAINER_ID}`,
+  brokers: [BROKER],
+});
+const consumer = kafka.consumer({ groupId: GROUP_ID });
+const activeStreams = new Set();
+
+function streamMessages(call) {
+  activeStreams.add(call);
+  console.log(
+    `[grpc:${CONTAINER_ID}] Stream connected (total: ${activeStreams.size})`
+  );
+  call.on("cancelled", () => {
+    activeStreams.delete(call);
+    console.log(
+      `[grpc:${CONTAINER_ID}] Stream cancelled (total: ${activeStreams.size})`
+    );
+  });
+}
+
+async function run() {
+  const server = new grpc.Server();
+  server.addService(benchmarkProto.BenchmarkService.service, {
+    StreamMessages: streamMessages,
+  });
+  server.bindAsync(
+    `0.0.0.0:${PORT}`,
+    grpc.ServerCredentials.createInsecure(),
+    (err) => {
+      if (err) {
+        console.error(`[grpc:${CONTAINER_ID}] Bind failed: ${err.message}`);
+        process.exit(1);
+      }
+      server.start();
+      console.log(`[grpc:${CONTAINER_ID}] Listening on 0.0.0.0:${PORT}`);
+    }
+  );
+
+  await consumer.connect();
+  console.log(
+    `[grpc:${CONTAINER_ID}] Kafka connected (group: ${GROUP_ID})`
+  );
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
+  console.log(`[grpc:${CONTAINER_ID}] Subscribed to ${TOPIC}`);
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      const raw = JSON.parse(message.value.toString());
+      const response = {
+        timestamp: raw.timestamp,
+        seq: raw.seq,
+        payload: message.value.toString(),
+      };
+      const toDelete = [];
+      for (const call of activeStreams) {
+        try {
+          call.write(response);
+        } catch {
+          toDelete.push(call);
+        }
+      }
+      for (const c of toDelete) activeStreams.delete(c);
+    },
+  });
+}
+
+const shutdown = async () => {
+  console.log(`[grpc:${CONTAINER_ID}] Shutting down`);
+  await consumer.disconnect();
+  process.exit(0);
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+run().catch((err) => {
+  console.error(`[grpc:${CONTAINER_ID}] Fatal: ${err.message}`);
+  process.exit(1);
+});

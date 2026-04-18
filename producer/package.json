@@ -1,0 +1,11 @@
+{
+  "name": "benchmark-producer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node producer.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  }
+}

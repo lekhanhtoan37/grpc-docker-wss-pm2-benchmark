@@ -1,0 +1,15 @@
+{
+  "name": "benchmark-client",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node client.js",
+    "start:gc": "node --expose-gc client.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13",
+    "hdr-histogram-js": "^3.0.1"
+  }
+}

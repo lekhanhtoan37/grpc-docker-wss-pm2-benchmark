@@ -1,0 +1,179 @@
+=== System Info ===
+Date: Sun Apr 19 01:38:38 +07 2026
+Kernel: Darwin tlk.local 24.1.0 Darwin Kernel Version 24.1.0: Thu Oct 10 21:06:23 PDT 2024; root:xnu-11215.41.3~3/RELEASE_ARM64_T8132 arm64
+Node: v22.13.0
+Docker: Docker version 27.4.1, build b9d17ea
+PM2: 6.0.14
+
+=== PM2 Metrics ===
+[1m[7m Describing process with id 0 - name ws-benchmark [27m[22m
+┌───────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│ status            │ [32m[1monline[22m[39m                                                                         │
+│ name              │ ws-benchmark                                                                   │
+│ namespace         │ default                                                                        │
+│ version           │ 1.0.0                                                                          │
+│ restarts          │ 1                                                                              │
+│ uptime            │ 14m                                                                            │
+│ script path       │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server/server.js │
+│ script args       │ N/A                                                                            │
+│ error log path    │ /Users/toanlk/.pm2/logs/ws-benchmark-error-0.log                               │
+│ out log path      │ /Users/toanlk/.pm2/logs/ws-benchmark-out-0.log                                 │
+│ pid path          │ /Users/toanlk/.pm2/pids/ws-benchmark-0.pid                                     │
+│ interpreter       │ node                                                                           │
+│ interpreter args  │ N/A                                                                            │
+│ script id         │ 0                                                                              │
+│ exec cwd          │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server           │
+│ exec mode         │ cluster_mode                                                                   │
+│ node.js version   │ 22.13.0                                                                        │
+│ node env          │ N/A                                                                            │
+│ watch & reload    │ ✘                                                                              │
+│ unstable restarts │ 0                                                                              │
+│ created at        │ 2026-04-18T18:24:09.010Z                                                       │
+└───────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+[7m[1m Actions available [22m[27m
+┌────────────────────────┐
+│ km:heapdump            │
+│ km:cpu:profiling:start │
+│ km:cpu:profiling:stop  │
+│ km:heap:sampling:start │
+│ km:heap:sampling:stop  │
+└────────────────────────┘
+[37m[3m Trigger via: pm2 trigger ws-benchmark <action_name>[23m[39m
+[37m[3m[23m[39m
+[7m[1m Code metrics value [22m[27m
+┌────────────────────────┬───────────┐
+│ Used Heap Size         │ 12.59 MiB │
+│ Heap Usage             │ 43.8 %    │
+│ Heap Size              │ 28.75 MiB │
+│ Event Loop Latency p95 │ 0.85 ms   │
+│ Event Loop Latency     │ 0.14 ms   │
+│ Active handles         │ 3         │
+│ Active requests        │ 0         │
+└────────────────────────┴───────────┘
+[7m[1m Divergent env variables from local env [22m[27m
+┌──────────────────┬────────────────────────────────────────────────────────────────────────┐
+│ PWD              │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server   │
+│ ATUIN_HISTORY_ID │ 019da1ce8bf27d01b5d21f8228b52d6b                                       │
+│ OLDPWD           │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/grpc-server │
+└──────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+[37m[3m Add your own code metrics: http://bit.ly/code-metrics[23m[39m
+[37m[3m Use `pm2 logs ws-benchmark [--lines 1000]` to display logs[23m[39m
+[37m[3m Use `pm2 env 0` to display environment variables[23m[39m
+[37m[3m Use `pm2 monit` to monitor CPU and Memory usage[23m[39m ws-benchmark
+[1m[7m Describing process with id 1 - name ws-benchmark [27m[22m
+┌───────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│ status            │ [32m[1monline[22m[39m                                                                         │
+│ name              │ ws-benchmark                                                                   │
+│ namespace         │ default                                                                        │
+│ version           │ 1.0.0                                                                          │
+│ restarts          │ 1                                                                              │
+│ uptime            │ 14m                                                                            │
+│ script path       │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server/server.js │
+│ script args       │ N/A                                                                            │
+│ error log path    │ /Users/toanlk/.pm2/logs/ws-benchmark-error-1.log                               │
+│ out log path      │ /Users/toanlk/.pm2/logs/ws-benchmark-out-1.log                                 │
+│ pid path          │ /Users/toanlk/.pm2/pids/ws-benchmark-1.pid                                     │
+│ interpreter       │ node                                                                           │
+│ interpreter args  │ N/A                                                                            │
+│ script id         │ 1                                                                              │
+│ exec cwd          │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server           │
+│ exec mode         │ cluster_mode                                                                   │
+│ node.js version   │ 22.13.0                                                                        │
+│ node env          │ N/A                                                                            │
+│ watch & reload    │ ✘                                                                              │
+│ unstable restarts │ 0                                                                              │
+│ created at        │ 2026-04-18T18:24:09.016Z                                                       │
+└───────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+[7m[1m Actions available [22m[27m
+┌────────────────────────┐
+│ km:heapdump            │
+│ km:cpu:profiling:start │
+│ km:cpu:profiling:stop  │
+│ km:heap:sampling:start │
+│ km:heap:sampling:stop  │
+└────────────────────────┘
+[37m[3m Trigger via: pm2 trigger ws-benchmark <action_name>[23m[39m
+[37m[3m[23m[39m
+[7m[1m Code metrics value [22m[27m
+┌────────────────────────┬───────────┐
+│ Used Heap Size         │ 20.90 MiB │
+│ Heap Usage             │ 84.44 %   │
+│ Heap Size              │ 24.75 MiB │
+│ Event Loop Latency p95 │ 0.97 ms   │
+│ Event Loop Latency     │ 0.16 ms   │
+│ Active handles         │ 3         │
+│ Active requests        │ 0         │
+└────────────────────────┴───────────┘
+[7m[1m Divergent env variables from local env [22m[27m
+┌──────────────────┬────────────────────────────────────────────────────────────────────────┐
+│ PWD              │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server   │
+│ ATUIN_HISTORY_ID │ 019da1ce8bf27d01b5d21f8228b52d6b                                       │
+│ OLDPWD           │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/grpc-server │
+└──────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+[37m[3m Add your own code metrics: http://bit.ly/code-metrics[23m[39m
+[37m[3m Use `pm2 logs ws-benchmark [--lines 1000]` to display logs[23m[39m
+[37m[3m Use `pm2 env 1` to display environment variables[23m[39m
+[37m[3m Use `pm2 monit` to monitor CPU and Memory usage[23m[39m ws-benchmark
+[1m[7m Describing process with id 2 - name ws-benchmark [27m[22m
+┌───────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│ status            │ [32m[1monline[22m[39m                                                                         │
+│ name              │ ws-benchmark                                                                   │
+│ namespace         │ default                                                                        │
+│ version           │ 1.0.0                                                                          │
+│ restarts          │ 1                                                                              │
+│ uptime            │ 14m                                                                            │
+│ script path       │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server/server.js │
+│ script args       │ N/A                                                                            │
+│ error log path    │ /Users/toanlk/.pm2/logs/ws-benchmark-error-2.log                               │
+│ out log path      │ /Users/toanlk/.pm2/logs/ws-benchmark-out-2.log                                 │
+│ pid path          │ /Users/toanlk/.pm2/pids/ws-benchmark-2.pid                                     │
+│ interpreter       │ node                                                                           │
+│ interpreter args  │ N/A                                                                            │
+│ script id         │ 2                                                                              │
+│ exec cwd          │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server           │
+│ exec mode         │ cluster_mode                                                                   │
+│ node.js version   │ 22.13.0                                                                        │
+│ node env          │ N/A                                                                            │
+│ watch & reload    │ ✘                                                                              │
+│ unstable restarts │ 0                                                                              │
+│ created at        │ 2026-04-18T18:24:09.628Z                                                       │
+└───────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+[7m[1m Actions available [22m[27m
+┌────────────────────────┐
+│ km:heapdump            │
+│ km:cpu:profiling:start │
+│ km:cpu:profiling:stop  │
+│ km:heap:sampling:start │
+│ km:heap:sampling:stop  │
+└────────────────────────┘
+[37m[3m Trigger via: pm2 trigger ws-benchmark <action_name>[23m[39m
+[37m[3m[23m[39m
+[7m[1m Code metrics value [22m[27m
+┌────────────────────────┬───────────┐
+│ Used Heap Size         │ 11.69 MiB │
+│ Heap Usage             │ 41.01 %   │
+│ Heap Size              │ 28.50 MiB │
+│ Event Loop Latency p95 │ 0.93 ms   │
+│ Event Loop Latency     │ 0.13 ms   │
+│ Active handles         │ 3         │
+│ Active requests        │ 0         │
+└────────────────────────┴───────────┘
+[7m[1m Divergent env variables from local env [22m[27m
+┌──────────────────┬────────────────────────────────────────────────────────────────────────┐
+│ PWD              │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/ws-server   │
+│ ATUIN_HISTORY_ID │ 019da1ce8bf27d01b5d21f8228b52d6b                                       │
+│ OLDPWD           │ /Users/toanlk/github.com/lekhanhtoan37/grpc-docker-wss-pm2/grpc-server │
+└──────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+[37m[3m Add your own code metrics: http://bit.ly/code-metrics[23m[39m
+[37m[3m Use `pm2 logs ws-benchmark [--lines 1000]` to display logs[23m[39m
+[37m[3m Use `pm2 env 2` to display environment variables[23m[39m
+[37m[3m Use `pm2 monit` to monitor CPU and Memory usage[23m[39m ws-benchmark
+
+=== Docker Stats ===
+CONTAINER ID   NAME            CPU %     MEM USAGE / LIMIT     MEM %     NET I/O           BLOCK I/O     PIDS
+720aa73a28ad   grpc-server-1   2.42%     31.73MiB / 11.73GiB   0.26%     7.18MB / 5.63MB   59.2MB / 0B   11
+0cffc9c67b1e   grpc-server-2   2.60%     25.75MiB / 11.73GiB   0.21%     7.18MB / 5.63MB   33.4MB / 0B   11
+1170be2e55fb   grpc-server-3   2.52%     33.39MiB / 11.73GiB   0.28%     7.18MB / 5.63MB   49.7MB / 0B   11

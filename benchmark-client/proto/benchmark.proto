@@ -1,0 +1,16 @@
+syntax = "proto3";
+package benchmark;
+
+service BenchmarkService {
+  rpc StreamMessages(StreamRequest) returns (stream StreamResponse);
+}
+
+message StreamRequest {
+  string client_id = 1;
+}
+
+message StreamResponse {
+  uint64 timestamp = 1;
+  uint64 seq = 2;
+  string payload = 3;
+}
