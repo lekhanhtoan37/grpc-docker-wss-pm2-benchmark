@@ -41,8 +41,8 @@ mkdir -p "$RESULTS_DIR"
 echo ""
 echo "--- Step 1: Kafka benchmark setup ---"
 
-if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null && nc -z 127.0.0.1 "$KAFKA_PORT" 2>/dev/null; then
-  echo "Kafka benchmark already running on 127.0.0.1:$KAFKA_PORT. Skipping setup."
+if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null && nc -z 192.168.0.5 "$KAFKA_PORT" 2>/dev/null; then
+  echo "Kafka benchmark already running on 192.168.0.5:$KAFKA_PORT. Skipping setup."
 else
   echo "Kafka benchmark not running. Setting up..."
 
@@ -93,15 +93,14 @@ else
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_REAL_DIR}"
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
-  # Write server.properties (dual listener: 127.0.0.1 for host, 172.17.0.1 for Docker)
   echo "Writing server.properties (host: 192.168.0.5)..."
   sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091
+listeners=PLAINTEXT://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://192.168.0.5:9091
 controller.listener.names=CONTROLLER
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
+listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
 log.dirs=/home/kafka-benchmark/data
 
@@ -194,10 +193,10 @@ echo "--- Updating server.properties (host: 192.168.0.5) ---"
 sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091
+listeners=PLAINTEXT://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://192.168.0.5:9091
 controller.listener.names=CONTROLLER
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
+listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
 log.dirs=/home/kafka-benchmark/data
 
@@ -237,10 +236,10 @@ echo "Listeners:"
 sudo netstat -ntpl 2>/dev/null | grep 9091 || ss -ntpl | grep 9091
 
 # Verify port
-if nc -z 127.0.0.1 "$KAFKA_PORT" 2>/dev/null; then
-  echo "Port 127.0.0.1:${KAFKA_PORT}: open"
+if nc -z 192.168.0.5 "$KAFKA_PORT" 2>/dev/null; then
+  echo "Port 192.168.0.5:${KAFKA_PORT}: open"
 else
-  echo "ERROR: Port 127.0.0.1:${KAFKA_PORT} not open."
+  echo "ERROR: Port 192.168.0.5:${KAFKA_PORT} not open."
   exit 1
 fi
 
@@ -251,13 +250,13 @@ echo ""
 echo "--- Step 2: Verify benchmark topic ---"
 if "${KAFKA_DIR}/bin/kafka-topics.sh" --describe \
     --topic benchmark-messages \
-    --bootstrap-server "127.0.0.1:${KAFKA_PORT}" 2>/dev/null; then
+    --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null; then
   echo "Topic benchmark-messages exists."
 else
   echo "Creating topic benchmark-messages (12 partitions)..."
   "${KAFKA_DIR}/bin/kafka-topics.sh" --create \
     --topic benchmark-messages \
-    --bootstrap-server "127.0.0.1:${KAFKA_PORT}" \
+    --bootstrap-server "192.168.0.5:${KAFKA_PORT}" \
     --partitions 12 \
     --replication-factor 1 \
     --config retention.ms=120000 \
@@ -268,7 +267,7 @@ else
     --if-not-exists
   "${KAFKA_DIR}/bin/kafka-topics.sh" --describe \
     --topic benchmark-messages \
-    --bootstrap-server "127.0.0.1:${KAFKA_PORT}"
+    --bootstrap-server "192.168.0.5:${KAFKA_PORT}"
 fi
 
 # ──────────────────────────────────────────────
@@ -278,14 +277,10 @@ fi
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Step 3: Setup iptables ---"
-HOST_IP=192.168.0.5
 
 # Remove old rules
 sudo iptables -D INPUT -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
-sudo iptables -D INPUT -i docker0 -d 127.0.0.1 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
-sudo iptables -D INPUT -i docker0 -d 192.168.0.5 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
-sudo iptables -t nat -D PREROUTING -p tcp --dport 9091 -d 172.17.0.1 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
-sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
+sudo iptables -D INPUT -s 172.16.0.0/12 -d 192.168.0.5 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
 
 # Allow Docker containers → Kafka on host IP
 sudo iptables -I INPUT 1 -s 172.16.0.0/12 -d 192.168.0.5 -p tcp --dport 9091 -j ACCEPT
@@ -350,7 +345,7 @@ PRODUCER_PID=""
 start_producer() {
   echo ""
   echo "--- Starting producer (target: ${TARGET_MBPS} MB/s) ---"
-  KAFKA_BROKER=127.0.0.1:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
+  KAFKA_BROKER=192.168.0.5:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
     node "$BASEDIR/producer/producer-rdkafka.js" &
   PRODUCER_PID=$!
   echo "Producer PID: $PRODUCER_PID"
@@ -411,10 +406,10 @@ echo "--- Step 8: Collect system info ---"
   echo "Docker: $(docker --version)"
   echo "PM2: $(pm2 --version)"
   echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
-  echo "Kafka benchmark port: 127.0.0.1:${KAFKA_PORT}"
+  echo "Kafka benchmark port: 192.168.0.5:${KAFKA_PORT}"
   echo ""
   echo "=== Topic Info ==="
-  "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "127.0.0.1:${KAFKA_PORT}" 2>/dev/null || true
+  "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null || true
   echo ""
   echo "=== PM2 Metrics ==="
   pm2 show ws-benchmark 2>/dev/null || true

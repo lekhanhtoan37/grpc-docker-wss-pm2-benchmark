@@ -21,13 +21,13 @@ check() {
 
 echo "--- Systemd Kafka Benchmark ---"
 check "Kafka benchmark service active" "systemctl is-active kafka-benchmark"
-check "Kafka port 127.0.0.1:9091" "nc -z 127.0.0.1 9091"
+check "Kafka port 192.168.0.5:9091" "nc -z 192.168.0.5 9091"
 check "Kafka controller 127.0.0.1:9093" "nc -z 127.0.0.1 9093"
-check "Topic benchmark-messages" "/opt/kafka-benchmark/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server 127.0.0.1:9091"
+check "Topic benchmark-messages" "/opt/kafka-benchmark/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server 192.168.0.5:9091"
 
 echo ""
 echo "--- Docker bridge → Kafka connectivity ---"
-HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP=192.168.0.5
 check "iptables allow Docker→Kafka" "iptables -L INPUT -n | grep 9091"
 check "Bridge container → Kafka (${HOST_IP}:9091)" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'${HOST_IP}',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
 

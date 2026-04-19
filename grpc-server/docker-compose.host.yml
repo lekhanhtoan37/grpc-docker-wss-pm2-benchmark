@@ -7,7 +7,7 @@ services:
       CONTAINER_ID: "host-1"
       GRPC_PORT: "60051"
       GRPC_HOST: "0.0.0.0"
-      KAFKA_BROKER: "127.0.0.1:9091"
+      KAFKA_BROKER: "192.168.0.5:9091"
       KAFKA_TOPIC: "benchmark-messages"
 
   grpc-host-2:
@@ -18,7 +18,7 @@ services:
       CONTAINER_ID: "host-2"
       GRPC_PORT: "60052"
       GRPC_HOST: "0.0.0.0"
-      KAFKA_BROKER: "127.0.0.1:9091"
+      KAFKA_BROKER: "192.168.0.5:9091"
       KAFKA_TOPIC: "benchmark-messages"
 
   grpc-host-3:
@@ -29,5 +29,5 @@ services:
       CONTAINER_ID: "host-3"
       GRPC_PORT: "60053"
       GRPC_HOST: "0.0.0.0"
-      KAFKA_BROKER: "127.0.0.1:9091"
+      KAFKA_BROKER: "192.168.0.5:9091"
       KAFKA_TOPIC: "benchmark-messages"

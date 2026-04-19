@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BROKER="${1:-127.0.0.1:9091}"
+BROKER="${1:-192.168.0.5:9091}"
 TOPIC="benchmark-messages"
 PARTITIONS=12
 
