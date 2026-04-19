@@ -20,7 +20,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
-const YIELD_EVERY = 500;
+const BATCH_SIZE = 1000;
 const yieldLoop = () => new Promise((r) => setImmediate(r));
 
 const kafka = new Kafka({
@@ -35,7 +35,6 @@ const consumer = kafka.consumer({
   maxBytes: 52428800,
   maxWaitTimeInMs: 500,
   sessionTimeout: 30000,
-  heartbeatInterval: 3000,
 });
 
 async function startConsumer() {
@@ -46,24 +45,19 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
-      const len = batch.messages.length;
-      const parsed = new Array(len);
-      for (let i = 0; i < len; i++) {
-        const buf = batch.messages[i].value;
-        const raw = JSON.parse(buf.toString());
-        parsed[i] = {
-          timestamp: raw.timestamp,
-          seq: raw.seq,
-          payload: buf,
-        };
-        if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
-      }
+      const msgs = batch.messages;
+      const len = msgs.length;
       const toDelete = [];
       for (const call of activeStreams) {
         try {
-          for (let i = 0; i < len; i++) {
-            call.write(parsed[i]);
-            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
+          for (let i = 0; i < len; i += BATCH_SIZE) {
+            const end = Math.min(i + BATCH_SIZE, len);
+            const chunk = new Array(end - i);
+            for (let j = i; j < end; j++) {
+              chunk[j - i] = msgs[j].value;
+            }
+            call.write({ messages: chunk });
+            await yieldLoop();
           }
         } catch {
           toDelete.push(call);
@@ -86,7 +80,7 @@ function streamMessages(call) {
 async function run() {
   const server = new grpc.Server({
     "grpc.max_receive_message_length": 10485760,
-    "grpc.max_send_message_length": 10485760,
+    "grpc.max_send_message_length": 536870912,
     "grpc.http2.max_frame_size": 16777215,
     "grpc.http2.initial_window_size": 67108864,
     "grpc.http2.initial_connection_window_size": 134217728,

@@ -135,7 +135,7 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 			grpc.WithInitialWindowSize(67108864),
 			grpc.WithInitialConnWindowSize(134217728),
 			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(10485760),
+				grpc.MaxCallRecvMsgSize(536870912),
 				grpc.MaxCallSendMsgSize(10485760),
 			),
 		)
@@ -172,11 +172,18 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 			}
 
 			nowMicros := time.Now().UnixMicro()
-			tsMicros := int64(resp.GetTimestamp()) * 1000
-			latencyMicros := nowMicros - tsMicros
-			if latencyMicros > 0 {
-				payload := resp.GetPayload()
-				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(payload))
+			for _, raw := range resp.GetMessages() {
+				var msg struct {
+					Timestamp float64 `json:"timestamp"`
+				}
+				if err := json.Unmarshal(raw, &msg); err != nil {
+					continue
+				}
+				tsMicros := int64(msg.Timestamp * 1000)
+				latencyMicros := nowMicros - tsMicros
+				if latencyMicros > 0 {
+					recordLatency(stats[gi].endpoints[ei], latencyMicros, len(raw))
+				}
 			}
 		}
 

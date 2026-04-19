@@ -12,7 +12,5 @@ message StreamRequest {
 }
 
 message StreamResponse {
-  uint64 timestamp = 1;
-  uint64 seq = 2;
-  bytes payload = 3;
+  repeated bytes messages = 1;
 }

@@ -67,9 +67,7 @@ func (x *StreamRequest) GetClientId() string {
 
 type StreamResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
-	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
+	Messages      [][]byte               `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -104,23 +102,9 @@ func (*StreamResponse) Descriptor() ([]byte, []int) {
 	return file_benchmark_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *StreamResponse) GetTimestamp() uint64 {
+func (x *StreamResponse) GetMessages() [][]byte {
 	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
-func (x *StreamResponse) GetSeq() uint64 {
-	if x != nil {
-		return x.Seq
-	}
-	return 0
-}
-
-func (x *StreamResponse) GetPayload() []byte {
-	if x != nil {
-		return x.Payload
+		return x.Messages
 	}
 	return nil
 }
@@ -131,11 +115,9 @@ const file_benchmark_proto_rawDesc = "" +
 	"\n" +
 	"\x0fbenchmark.proto\x12\tbenchmark\",\n" +
 	"\rStreamRequest\x12\x1b\n" +
-	"\tclient_id\x18\x01 \x01(\tR\bclientId\"Z\n" +
-	"\x0eStreamResponse\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x10\n" +
-	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\fR\apayload2[\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\",\n" +
+	"\x0eStreamResponse\x12\x1a\n" +
+	"\bmessages\x18\x01 \x03(\fR\bmessages2[\n" +
 	"\x10BenchmarkService\x12G\n" +
 	"\x0eStreamMessages\x12\x18.benchmark.StreamRequest\x1a\x19.benchmark.StreamResponse0\x01B#Z!github.com/benchmark-client/protob\x06proto3"
 
