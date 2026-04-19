@@ -26,6 +26,12 @@ check "Kafka controller 127.0.0.1:9093" "nc -z 127.0.0.1 9093"
 check "Topic benchmark-messages" "/opt/kafka-benchmark/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server 127.0.0.1:9091"
 
 echo ""
+echo "--- Docker bridge → Kafka connectivity ---"
+check "route_localnet enabled" "sysctl net.ipv4.conf.all.route_localnet | grep '= 1'"
+check "DNAT rule exists" "iptables -t nat -L PREROUTING -n | grep 9091"
+check "Bridge container → Kafka" "docker exec grpc-server-1 nc -z -w3 host.docker.internal 9091"
+
+echo ""
 echo "--- gRPC Servers (bridge) ---"
 for port in 50051 50052 50053; do
   check "gRPC bridge :$port" "nc -z 127.0.0.1 $port"
