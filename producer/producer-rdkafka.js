@@ -45,21 +45,16 @@ producer.on("event.error", (err) => {
 
 function produceLoop() {
   const BATCH_SIZE = 500;
-  const messages = [];
 
   for (let i = 0; i < BATCH_SIZE; i++) {
     const now = Date.now();
-    const msg = JSON.stringify({ timestamp: now, seq: seq++, data: PADDING });
-    messages.push({
-      value: Buffer.from(msg),
-      key: `msg-${seq}`,
-      partition: seq % NUM_PARTITIONS,
-    });
+    const msg = JSON.stringify({ timestamp: now, seq: seq, data: PADDING });
+    const partition = seq % NUM_PARTITIONS;
     bytesSent += msg.length;
+    messagesSent++;
+    seq++;
+    producer.produce(TOPIC, partition, Buffer.from(msg), `msg-${seq}`);
   }
-  messagesSent += BATCH_SIZE;
-
-  producer.produceBatch(TOPIC, -1, messages);
 
   if (messagesSent % 100000 === 0) {
     const elapsed = (Date.now() - startTime) / 1000;
