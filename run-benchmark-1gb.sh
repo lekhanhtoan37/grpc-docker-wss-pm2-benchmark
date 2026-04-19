@@ -230,13 +230,13 @@ sudo sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
 DOCKER_GW=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || echo "172.17.0.1")
 echo "Docker bridge gateway: ${DOCKER_GW}"
 if ! sudo iptables -t nat -C PREROUTING -p tcp --dport 9091 -d "$DOCKER_GW" -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null; then
-  sudo iptables -t nat -A PREROUTING -p tcp --dport 9091 -d "$DOCKER_GW" -j DNAT --to-destination 127.0.0.1:9091
-  echo "DNAT rule added: ${DOCKER_GW}:9091 → 127.0.0.1:9091"
+  sudo iptables -t nat -I PREROUTING 1 -p tcp --dport 9091 -d "$DOCKER_GW" -j DNAT --to-destination 127.0.0.1:9091
+  echo "DNAT rule inserted: ${DOCKER_GW}:9091 → 127.0.0.1:9091"
 else
   echo "DNAT rule already exists."
 fi
 sudo iptables -C INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || \
-  sudo iptables -A INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT
+  sudo iptables -I INPUT 1 -i docker0 -p tcp --dport 9091 -j ACCEPT
 
 # ──────────────────────────────────────────────
 # Step 4: Build + start gRPC Docker
