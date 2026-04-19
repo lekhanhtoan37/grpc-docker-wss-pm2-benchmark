@@ -14,7 +14,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 KAFKA_VERSION="3.9.2"
 SCALA_VERSION="2.13"
 KAFKA_DIR="/opt/kafka-benchmark"
-KAFKA_DATA="/var/lib/kafka-benchmark/data"
+KAFKA_DATA="/home/kafka-benchmark/data"
 KAFKA_USER="kafka-bench"
 KAFKA_SERVICE="kafka-benchmark"
 KAFKA_PORT=9091
@@ -90,7 +90,7 @@ advertised.listeners=PLAINTEXT://127.0.0.1:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
-log.dirs=/var/lib/kafka-benchmark/data
+log.dirs=/home/kafka-benchmark/data
 
 socket.send.buffer.bytes=1048576
 socket.receive.buffer.bytes=1048576
@@ -197,9 +197,9 @@ else
     --bootstrap-server "127.0.0.1:${KAFKA_PORT}" \
     --partitions 12 \
     --replication-factor 1 \
-    --config retention.ms=86400000 \
-    --config segment.bytes=1073741824 \
-    --config retention.bytes=-1 \
+    --config retention.ms=120000 \
+    --config segment.bytes=104857600 \
+    --config retention.bytes=1073741824 \
     --config max.message.bytes=10485760 \
     --config min.insync.replicas=1 \
     --if-not-exists

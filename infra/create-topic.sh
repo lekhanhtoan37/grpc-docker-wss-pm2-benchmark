@@ -12,9 +12,9 @@ echo "=== Creating topic ${TOPIC} with ${PARTITIONS} partitions ==="
   --bootstrap-server "$BROKER" \
   --partitions "$PARTITIONS" \
   --replication-factor 1 \
-  --config retention.ms=86400000 \
-  --config segment.bytes=1073741824 \
-  --config retention.bytes=-1 \
+  --config retention.ms=120000 \
+  --config segment.bytes=104857600 \
+  --config retention.bytes=1073741824 \
   --config max.message.bytes=10485760 \
   --config min.insync.replicas=1 \
   --if-not-exists

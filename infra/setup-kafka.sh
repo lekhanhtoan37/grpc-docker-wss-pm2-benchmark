@@ -4,7 +4,7 @@ set -e
 KAFKA_VERSION="3.9.2"
 SCALA_VERSION="2.13"
 KAFKA_DIR="/opt/kafka-benchmark"
-KAFKA_DATA="/var/lib/kafka-benchmark/data"
+KAFKA_DATA="/home/kafka-benchmark/data"
 KAFKA_USER="kafka-bench"
 KAFKA_SERVICE="kafka-benchmark"
 
