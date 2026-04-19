@@ -1,6 +1,6 @@
 const http = require("http");
 const { WebSocketServer } = require("ws");
-const Kafka = require("node-rdkafka");
+const { Kafka } = require("kafkajs");
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const BROKER = process.env.KAFKA_BROKER || "192.168.0.5:9091";
@@ -10,42 +10,50 @@ const GROUP_ID = `ws-benchmark-worker-${INSTANCE}`;
 
 const clients = new Set();
 
-const consumer = new Kafka.KafkaConsumer({
-  "metadata.broker.list": BROKER,
-  "group.id": GROUP_ID,
-  "enable.auto.commit": true,
-  "auto.commit.interval.ms": 5000,
-  "fetch.min.bytes": 1048576,
-  "fetch.max.bytes": 52428800,
-  "fetch.wait.max.ms": 500,
-  "max.partition.fetch.bytes": 10485760,
-  "queued.min.messages": 100000,
-  "queued.max.messages.kbytes": 1048576,
-  "session.timeout.ms": 30000,
-}, {
-  "auto.offset.reset": "latest",
+const kafka = new Kafka({
+  brokers: [BROKER],
+  clientId: `ws-${INSTANCE}`,
 });
 
-consumer.on("ready", () => {
-  console.log(`[ws:${INSTANCE}] Kafka consumer ready (group: ${GROUP_ID})`);
-  consumer.subscribe([TOPIC]);
-  consumer.consume();
+const consumer = kafka.consumer({
+  groupId: GROUP_ID,
+  maxBytesPerPartition: 10485760,
+  minBytes: 1,
+  maxBytes: 52428800,
+  maxWaitTimeInMs: 500,
+  sessionTimeout: 30000,
 });
 
-consumer.on("data", (message) => {
-  const payload = message.value.toString();
-  for (const ws of clients) {
-    if (ws.readyState === 1) {
-      ws.send(payload);
-    }
-  }
-});
+async function startConsumer() {
+  await consumer.connect();
+  console.log(`[ws:${INSTANCE}] Kafka consumer connected (group: ${GROUP_ID})`);
+  await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
+  console.log(`[ws:${INSTANCE}] Subscribed to ${TOPIC}`);
+  await consumer.run({
+    eachBatchAutoResolve: false,
+    eachBatch: async ({ batch }) => {
+      const payload = [];
+      for (const message of batch.messages) {
+        payload.push(message.value);
+      }
+      const raw = payload.length === 1 ? payload[0].toString() : null;
+      for (const ws of clients) {
+        if (ws.readyState === 1) {
+          if (raw) {
+            ws.send(raw);
+          } else {
+            for (const p of payload) ws.send(p);
+          }
+        }
+      }
+    },
+  });
+}
 
-consumer.on("event.error", (err) => {
-  console.error(`[ws:${INSTANCE}] Kafka error: ${err.message}`);
+startConsumer().catch((err) => {
+  console.error(`[ws:${INSTANCE}] Kafka consumer error: ${err.message}`);
+  process.exit(1);
 });
-
-consumer.connect();
 
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
@@ -64,10 +72,10 @@ server.listen(PORT, () => {
   if (process.send) process.send("ready");
 });
 
-const shutdown = () => {
+const shutdown = async () => {
   console.log(`[ws:${INSTANCE}] Shutting down`);
   for (const ws of clients) ws.close();
-  consumer.disconnect();
+  await consumer.disconnect().catch(() => {});
   process.exit(0);
 };
 
