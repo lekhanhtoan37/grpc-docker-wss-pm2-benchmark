@@ -8,7 +8,7 @@ module.exports = {
       max_memory_restart: "1G",
       env: {
         PORT: 8080,
-        KAFKA_BROKER: "localhost:9091",
+        KAFKA_BROKER: "127.0.0.1:9091",
         KAFKA_TOPIC: "benchmark-messages",
         UV_THREADPOOL_SIZE: "16",
       },

@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-BROKER="${1:-localhost:9091}"
+BROKER="${1:-127.0.0.1:9091}"
 TOPIC="benchmark-messages"
 PARTITIONS=12
 
 echo "=== Creating topic ${TOPIC} with ${PARTITIONS} partitions ==="
 
-/opt/kafka/bin/kafka-topics.sh --create \
+/opt/kafka-benchmark/bin/kafka-topics.sh --create \
   --topic "$TOPIC" \
   --bootstrap-server "$BROKER" \
   --partitions "$PARTITIONS" \
@@ -19,6 +19,6 @@ echo "=== Creating topic ${TOPIC} with ${PARTITIONS} partitions ==="
   --config min.insync.replicas=1 \
   --if-not-exists
 
-/opt/kafka/bin/kafka-topics.sh --describe \
+/opt/kafka-benchmark/bin/kafka-topics.sh --describe \
   --topic "$TOPIC" \
   --bootstrap-server "$BROKER"

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "=== 1GB/s Benchmark Health Check ==="
 echo ""
@@ -19,22 +19,22 @@ check() {
   fi
 }
 
-echo "--- Systemd Kafka ---"
-check "Kafka service active" "systemctl is-active kafka"
-check "Kafka port 9091" "nc -z localhost 9091"
-check "Kafka port 9093 (controller)" "nc -z localhost 9093"
-check "Topic benchmark-messages" "/opt/kafka/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server localhost:9091"
+echo "--- Systemd Kafka Benchmark ---"
+check "Kafka benchmark service active" "systemctl is-active kafka-benchmark"
+check "Kafka port 127.0.0.1:9091" "nc -z 127.0.0.1 9091"
+check "Kafka controller 127.0.0.1:9093" "nc -z 127.0.0.1 9093"
+check "Topic benchmark-messages" "/opt/kafka-benchmark/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server 127.0.0.1:9091"
 
 echo ""
 echo "--- gRPC Servers (bridge) ---"
 for port in 50051 50052 50053; do
-  check "gRPC bridge :$port" "nc -z localhost $port"
+  check "gRPC bridge :$port" "nc -z 127.0.0.1 $port"
 done
 
 echo ""
 echo "--- gRPC Host-Networked Servers ---"
 for port in 60051 60052 60053; do
-  check "gRPC host :$port" "nc -z localhost $port"
+  check "gRPC host :$port" "nc -z 127.0.0.1 $port"
 done
 
 echo ""
@@ -43,7 +43,7 @@ check "PM2 ws-benchmark" "pm2 describe ws-benchmark"
 
 echo ""
 echo "--- WS Connectivity ---"
-check "WS :8080" "cd '$(dirname "$0")/ws-server' && node -e \"const ws=new(require('ws'))('ws://localhost:8080');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)\""
+check "WS :8080" "cd '$(dirname "$0")/ws-server' && node -e \"const ws=new(require('ws'))('ws://127.0.0.1:8080');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)\""
 
 echo ""
 echo "--- Docker ---"

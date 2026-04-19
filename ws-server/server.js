@@ -3,7 +3,7 @@ const { WebSocketServer } = require("ws");
 const Kafka = require("node-rdkafka");
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
-const BROKER = process.env.KAFKA_BROKER || "localhost:9091";
+const BROKER = process.env.KAFKA_BROKER || "127.0.0.1:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.pid;
 const GROUP_ID = `ws-benchmark-worker-${INSTANCE}`;
