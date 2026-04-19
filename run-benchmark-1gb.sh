@@ -93,12 +93,12 @@ else
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_REAL_DIR}"
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
-  # Write server.properties (always overwrite to ensure 127.0.0.1:9091)
-  echo "Writing server.properties (bind 127.0.0.1:${KAFKA_PORT})..."
+  # Write server.properties (bind 0.0.0.0:9091 for Docker access)
+  echo "Writing server.properties (bind 0.0.0.0:${KAFKA_PORT})..."
   sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<'PROPS'
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,CONTROLLER://127.0.0.1:9093
+listeners=PLAINTEXT://0.0.0.0:9091,CONTROLLER://127.0.0.1:9093
 advertised.listeners=PLAINTEXT://127.0.0.1:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -109,12 +109,12 @@ socket.send.buffer.bytes=1048576
 socket.receive.buffer.bytes=1048576
 socket.request.max.bytes=104857600
 
-log.segment.bytes=1073741824
+log.segment.bytes=104857600
 num.partitions=12
-log.retention.hours=168
-log.retention.bytes=-1
-log.flush.interval.messages=50000
-log.flush.interval.ms=10000
+log.retention.ms=120000
+log.retention.bytes=1073741824
+log.cleanup.policy=delete
+log.cleanup.interval.ms=10000
 
 num.network.threads=8
 num.io.threads=8
@@ -224,28 +224,13 @@ fi
 # ──────────────────────────────────────────────
 # Step 3: iptables DNAT for Docker bridge → Kafka
 # ──────────────────────────────────────────────
+# Step 3: Clean up old DNAT rules (no longer needed)
+# ──────────────────────────────────────────────
 echo ""
-echo "--- Step 3: Setup iptables for Docker bridge → Kafka ---"
-sudo sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
-
-# Clean stale rules (old format matching -d IP)
+echo "--- Step 3: Cleanup ---"
 sudo iptables -t nat -D PREROUTING -p tcp --dport 9091 -d 172.17.0.1 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
-
-# Insert BEFORE Docker's DOCKER chain rule (position 1)
-if ! sudo iptables -t nat -C PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null; then
-  sudo iptables -t nat -I PREROUTING 1 -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
-  echo "DNAT rule inserted at position 1 (before DOCKER chain)"
-else
-  # Rule exists but might be after DOCKER - move it to position 1
-  sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
-  sudo iptables -t nat -I PREROUTING 1 -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
-  echo "DNAT rule moved to position 1"
-fi
-sudo iptables -C INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || \
-  sudo iptables -I INPUT 1 -i docker0 -p tcp --dport 9091 -j ACCEPT
-
-echo "NAT PREROUTING rules (our rule must be #1):"
-sudo iptables -t nat -L PREROUTING -n --line-numbers | head -5
+sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
+echo "Old DNAT rules cleaned."
 
 # ──────────────────────────────────────────────
 # Step 4: Build + start gRPC Docker
