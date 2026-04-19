@@ -20,6 +20,8 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
+const YIELD_EVERY = 500;
+const yieldLoop = () => new Promise((r) => setImmediate(r));
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -33,6 +35,7 @@ const consumer = kafka.consumer({
   maxBytes: 52428800,
   maxWaitTimeInMs: 500,
   sessionTimeout: 30000,
+  heartbeatInterval: 3000,
 });
 
 async function startConsumer() {
@@ -43,22 +46,24 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
-      const parsed = new Array(batch.messages.length);
-      for (let i = 0; i < batch.messages.length; i++) {
+      const len = batch.messages.length;
+      const parsed = new Array(len);
+      for (let i = 0; i < len; i++) {
         const buf = batch.messages[i].value;
-        const str = buf.toString();
-        const raw = JSON.parse(str);
+        const raw = JSON.parse(buf.toString());
         parsed[i] = {
           timestamp: raw.timestamp,
           seq: raw.seq,
-          payload: Buffer.from(str),
+          payload: buf,
         };
+        if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
       }
       const toDelete = [];
       for (const call of activeStreams) {
         try {
-          for (let i = 0; i < parsed.length; i++) {
+          for (let i = 0; i < len; i++) {
             call.write(parsed[i]);
+            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
           }
         } catch {
           toDelete.push(call);
@@ -102,9 +107,15 @@ async function run() {
     }
   );
 
-  startConsumer().catch((err) => {
-    console.error(`[grpc:${CONTAINER_ID}] Kafka consumer error: ${err.message}`);
-  });
+  const retryConsumer = async () => {
+    try {
+      await startConsumer();
+    } catch (err) {
+      console.error(`[grpc:${CONTAINER_ID}] Kafka consumer error: ${err.message}, restarting in 5s...`);
+      setTimeout(retryConsumer, 5000);
+    }
+  };
+  retryConsumer();
 }
 
 const shutdown = async () => {
