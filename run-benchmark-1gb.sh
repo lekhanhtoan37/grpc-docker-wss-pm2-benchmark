@@ -190,14 +190,14 @@ fi
 # ──────────────────────────────────────────────
 # Step 1b: Always update config + restart
 # ──────────────────────────────────────────────
-HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP=192.168.0.5
 echo ""
 echo "--- Updating server.properties (host: ${HOST_IP}) ---"
 sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091
+listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
