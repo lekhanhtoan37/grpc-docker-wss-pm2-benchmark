@@ -19,7 +19,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 });
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
-const activeStreams = new Set();
+const activeStreams = new Map();
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -43,36 +43,42 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
-      const responses = [];
-      for (const message of batch.messages) {
-        const raw = JSON.parse(message.value.toString());
-        responses.push({
-          timestamp: raw.timestamp,
-          seq: raw.seq,
-          payload: message.value.toString(),
-        });
-      }
       const toDelete = [];
-      for (const call of activeStreams) {
+      for (const [call, paused] of activeStreams) {
+        if (paused) continue;
         try {
-          for (const resp of responses) {
-            call.write(resp);
+          for (const message of batch.messages) {
+            const raw = JSON.parse(message.value.toString());
+            const ok = call.write({
+              timestamp: raw.timestamp,
+              seq: raw.seq,
+              payload: message.value.toString(),
+            });
+            if (!ok) {
+              activeStreams.set(call, true);
+              break;
+            }
           }
         } catch {
           toDelete.push(call);
         }
       }
-      for (const c of toDelete) activeStreams.delete(c);
+      for (const c of toDelete) {
+        activeStreams.delete(c);
+      }
     },
   });
 }
 
 function streamMessages(call) {
-  activeStreams.add(call);
+  activeStreams.set(call, false);
   console.log(`[grpc:${CONTAINER_ID}] Stream connected (total: ${activeStreams.size})`);
   call.on("cancelled", () => {
     activeStreams.delete(call);
     console.log(`[grpc:${CONTAINER_ID}] Stream cancelled (total: ${activeStreams.size})`);
+  });
+  call.on("drain", () => {
+    activeStreams.set(call, false);
   });
 }
 
