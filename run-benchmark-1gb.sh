@@ -20,13 +20,13 @@ if ! systemctl is-active --quiet kafka 2>/dev/null; then
   exit 1
 fi
 echo "Kafka systemd service: active"
-nc -z localhost 9092 && echo "Port 9092: open" || { echo "Port 9092: CLOSED"; exit 1; }
+nc -z localhost 9091 && echo "Port 9091: open" || { echo "Port 9091: CLOSED"; exit 1; }
 
 echo ""
 echo "--- Step 2: Verify benchmark topic ---"
 /opt/kafka/bin/kafka-topics.sh --describe \
   --topic benchmark-messages \
-  --bootstrap-server localhost:9092 2>/dev/null || {
+  --bootstrap-server localhost:9091 2>/dev/null || {
   echo "Topic not found. Creating..."
   bash "$BASEDIR/infra/create-topic.sh"
 }
@@ -77,7 +77,7 @@ PRODUCER_PID=""
 start_producer() {
   echo ""
   echo "--- Starting producer (target: ${TARGET_MBPS} MB/s) ---"
-  KAFKA_BROKER=localhost:9092 TARGET_MBPS="$TARGET_MBPS" \
+  KAFKA_BROKER=localhost:9091 TARGET_MBPS="$TARGET_MBPS" \
     node "$BASEDIR/producer/producer-rdkafka.js" &
   PRODUCER_PID=$!
   echo "Producer PID: $PRODUCER_PID"
@@ -135,10 +135,10 @@ echo "--- Step 10: Collect system info ---"
   echo "Kafka: systemd ($(systemctl is-active kafka))"
   echo ""
   echo "=== Kafka Config ==="
-  /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 2>/dev/null | head -5
+  /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9091 2>/dev/null | head -5
   echo ""
   echo "=== Topic Info ==="
-  /opt/kafka/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server localhost:9092
+  /opt/kafka/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server localhost:9091
   echo ""
   echo "=== PM2 Metrics ==="
   pm2 show ws-benchmark 2>/dev/null

@@ -21,9 +21,9 @@ check() {
 
 echo "--- Systemd Kafka ---"
 check "Kafka service active" "systemctl is-active kafka"
-check "Kafka port 9092" "nc -z localhost 9092"
+check "Kafka port 9091" "nc -z localhost 9091"
 check "Kafka port 9093 (controller)" "nc -z localhost 9093"
-check "Topic benchmark-messages" "/opt/kafka/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server localhost:9092"
+check "Topic benchmark-messages" "/opt/kafka/bin/kafka-topics.sh --describe --topic benchmark-messages --bootstrap-server localhost:9091"
 
 echo ""
 echo "--- gRPC Servers (bridge) ---"

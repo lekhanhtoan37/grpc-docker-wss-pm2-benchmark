@@ -1,6 +1,6 @@
 const Kafka = require("node-rdkafka");
 
-const BROKER = process.env.KAFKA_BROKER || "localhost:9092";
+const BROKER = process.env.KAFKA_BROKER || "localhost:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const TARGET_MBPS = parseInt(process.env.TARGET_MBPS || "1000", 10);
 const MSG_SIZE = parseInt(process.env.MSG_SIZE || "1024", 10);
