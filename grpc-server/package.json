@@ -5,6 +5,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",
     "@grpc/proto-loader": "^0.7.13",
-    "kafkajs": "^2.2.4"
+    "kafkajs": "^2.2.4",
+    "node-rdkafka": "^3.3.0"
   }
 }
