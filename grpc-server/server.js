@@ -2,12 +2,13 @@ const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const { Kafka } = require("kafkajs");
 
-const PROTO_PATH = "/app/proto/benchmark.proto";
+const PROTO_PATH = process.env.PROTO_PATH || "/app/proto/benchmark.proto";
 const BROKER = process.env.KAFKA_BROKER || "host.docker.internal:9092";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const CONTAINER_ID = process.env.CONTAINER_ID || "default";
 const GROUP_ID = `grpc-benchmark-${CONTAINER_ID}`;
-const PORT = 50051;
+const PORT = parseInt(process.env.GRPC_PORT || "50051", 10);
+const HOST = process.env.GRPC_HOST || "0.0.0.0";
 
 const packageDef = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -44,7 +45,7 @@ async function run() {
     StreamMessages: streamMessages,
   });
   server.bindAsync(
-    `0.0.0.0:${PORT}`,
+    `${HOST}:${PORT}`,
     grpc.ServerCredentials.createInsecure(),
     (err) => {
       if (err) {
@@ -52,7 +53,7 @@ async function run() {
         process.exit(1);
       }
       server.start();
-      console.log(`[grpc:${CONTAINER_ID}] Listening on 0.0.0.0:${PORT}`);
+      console.log(`[grpc:${CONTAINER_ID}] Listening on ${HOST}:${PORT}`);
     }
   );
 

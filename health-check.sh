@@ -33,10 +33,22 @@ echo "--- Kafka Topic ---"
 check "Topic benchmark-messages" "docker exec benchmark-kafka kafka-topics --describe --topic benchmark-messages --bootstrap-server $KAFKA_BROKER"
 
 echo ""
-echo "--- gRPC Servers ---"
+echo "--- gRPC Servers (bridge) ---"
 for port in 50051 50052 50053; do
   check "gRPC :$port" "nc -z localhost $port"
 done
+
+echo ""
+echo "--- gRPC Host-Networked Servers ---"
+for port in 60051 60052 60053; do
+  check "gRPC-host :$port" "nc -z localhost $port"
+done
+
+if [[ "$(uname)" == "Darwin" ]]; then
+  echo ""
+  echo "--- Docker Host Networking ---"
+  echo "  ⚠ macOS: network_mode:host uses VM network, not true host networking"
+fi
 
 echo ""
 echo "--- PM2 WS ---"

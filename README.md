@@ -1,39 +1,45 @@
 # WS vs gRPC Latency Benchmark
 
-So sánh latency p50/p99 giữa PM2 WebSocket cluster (host) và gRPC Docker containers (bridge network). Cả hai đều consume từ cùng một Kafka topic.
+So sánh latency p50/p99 giữa 3 nhóm: PM2 WebSocket cluster (host), gRPC Docker containers (bridge network), và gRPC Docker containers (host network). Cả ba đều consume từ cùng một Kafka topic.
 
 ## Architecture
 
 ```
                         HOST
-  ┌──────────────┐    ┌──────────────────────┐
-  │ Kafka Producer│    │  Benchmark Client    │
-  │ 100 msg/s 1KB │    │  3 WS + 3 gRPC      │
-  └──────┬───────┘    │  hdr-histogram       │
-         │            └──┬───┬──┬──┬──┬──────┘
-         ▼               │   │  │  │  │
-   ┌───────────┐         │   │  │  │  │
-   │ Kafka     │         │   │  │  │  │
-   │ :9092     │         │   │  │  │  │
-   └─────┬─────┘         │   │  │  │  │
-         │               │   │  │  │  │
-  ┌──────┴──────┐       │   │  │  │  │
-  │ PM2 WS      │◄──────┘   │  │  │  │
-  │ 3 workers   │           │  │  │  │
-  │ :8080       │           │  │  │  │
-  └─────────────┘           │  │  │  │
-                            │  │  │  │
-  ┌──── Docker ─────────────┘  │  │  │
-  │  grpc-net + kafka-net      │  │  │
-  │                            │  │  │
-  │  ┌─────┐ ┌─────┐ ┌─────┐ │  │  │
-  │  │ctr-1│ │ctr-2│ │ctr-3│ │  │  │
-  │  │:510 │ │:510 │ │:510 │ │  │  │
-  │  └──┬──┘ └──┬──┘ └──┬──┘ │  │  │
-  │     └───────┴───────┘    │  │  │
-  └───────────────────────────┘  │  │
-       :50051 :50052 :50053 ◄────┘  │
-                             ◄──────┘
+  ┌──────────────┐    ┌──────────────────────────┐
+  │ Kafka Producer│    │  Benchmark Client        │
+  │ 100 msg/s 1KB │    │  3 WS + 3 gRPC-bridge   │
+  └──────┬───────┘    │    + 3 gRPC-host          │
+         │            │  hdr-histogram            │
+         ▼            └──┬───┬──┬──┬──┬──┬──┬────┘
+   ┌───────────┐         │   │  │  │  │  │  │
+   │ Kafka     │         │   │  │  │  │  │  │
+   │ :9092     │         │   │  │  │  │  │  │
+   └─────┬─────┘         │   │  │  │  │  │  │
+         │               │   │  │  │  │  │  │
+  ┌──────┴──────┐       │   │  │  │  │  │  │
+  │ PM2 WS      │◄──────┘   │  │  │  │  │  │
+  │ 3 workers   │           │  │  │  │  │  │
+  │ :8080       │           │  │  │  │  │  │
+  └─────────────┘           │  │  │  │  │  │
+                            │  │  │  │  │  │
+  ┌──── Docker (bridge) ────┘  │  │  │  │  │
+  │  grpc-net + kafka-net      │  │  │  │  │
+  │  ┌─────┐ ┌─────┐ ┌─────┐ │  │  │  │  │
+  │  │ctr-1│ │ctr-2│ │ctr-3│ │  │  │  │  │
+  │  │:510 │ │:510 │ │:510 │ │  │  │  │  │
+  │  └──┬──┘ └──┬──┘ └──┬──┘ │  │  │  │  │
+  └─────┴───────┴───────┘    │  │  │  │  │
+       :50051 :50052 :50053 ◄─┘  │  │  │
+                               │  │  │
+  ┌──── Docker (host) ──────────┘  │  │
+  │  network_mode: host             │  │
+  │  ┌─────┐ ┌─────┐ ┌─────┐      │  │
+  │  │host1│ │host2│ │host3│      │  │
+  │  │60051│ │60052│ │60053│      │  │
+  │  └─────┘ └─────┘ └─────┘      │  │
+  └────────────────────────────────┘  │
+       :60051 :60052 :60053 ◄─────────┘
 ```
 
 ## Quick Start
@@ -47,10 +53,11 @@ Script tự động:
 1. Start Kafka + Zookeeper (Docker)
 2. Tạo topic `benchmark-messages` (1 partition)
 3. Start 3 gRPC containers (bridge network)
-4. Start 3 PM2 WS workers (cluster mode)
-5. Health check tất cả endpoints
-6. Chạy 3 lần benchmark (60s warmup + 5min đo mỗi lần)
-7. Thu thập kết quả vào `results/`
+4. Start 3 gRPC containers (host network)
+5. Start 3 PM2 WS workers (cluster mode)
+6. Health check tất cả endpoints
+7. Chạy 3 lần benchmark (60s warmup + 5min đo mỗi lần)
+8. Thu thập kết quả vào `results/`
 
 ## Manual Step-by-Step
 
@@ -62,9 +69,13 @@ docker exec benchmark-kafka kafka-topics --create \
   --topic benchmark-messages --partitions 1 --replication-factor 1 \
   --if-not-exists --bootstrap-server localhost:9092
 
-# 2. Start gRPC servers
+# 2. Start gRPC servers (bridge)
 cd grpc-server && docker compose up -d --build
 sleep 10
+
+# 2b. Start gRPC servers (host network)
+cd grpc-server && docker compose -f docker-compose.host.yml up -d --build
+sleep 5
 
 # 3. Start WS servers
 cd ws-server && npm install && pm2 start ecosystem.config.js
@@ -79,6 +90,7 @@ node client.js --warmup 60 --duration 300
 
 # 6. Cleanup
 pm2 delete ws-benchmark
+cd ../grpc-server && docker compose -f docker-compose.host.yml down
 cd ../grpc-server && docker compose down
 cd ../infra && docker compose down
 ```
@@ -97,12 +109,13 @@ cd ../infra && docker compose down
 │   ├── package.json
 │   ├── server.js
 │   └── ecosystem.config.js
-├── grpc-server/             # gRPC Docker containers (3x)
+├── grpc-server/             # gRPC Docker containers (3x bridge + 3x host)
 │   ├── package.json
 │   ├── server.js
 │   ├── Dockerfile
-│   └── docker-compose.yml
-├── benchmark-client/        # Benchmark client (6 connections, hdr-histogram)
+│   ├── docker-compose.yml
+│   └── docker-compose.host.yml
+├── benchmark-client/        # Benchmark client (9 connections, hdr-histogram)
 │   ├── package.json
 │   ├── client.js
 │   └── proto/
@@ -114,7 +127,21 @@ cd ../infra && docker compose down
 
 ## Approach
 
-**Approach B: Unique Consumer Groups** — Mỗi consumer (3 WS workers + 3 gRPC containers) dùng unique consumer group trên 1 partition Kafka. Mỗi consumer nhận tất cả messages. So sánh latency cho cùng một message giữa WS và gRPC.
+**Approach B: Unique Consumer Groups** — Mỗi consumer (3 WS workers + 3 gRPC bridge + 3 gRPC host) dùng unique consumer group trên 1 partition Kafka. Mỗi consumer nhận tất cả messages. So sánh latency cho cùng một message giữa 3 nhóm.
+
+## Network Mode Comparison
+
+Benchmark so sánh 3 deployment modes:
+
+| Mode | Runtime | Network | Purpose |
+|------|---------|---------|---------|
+| WS (host/PM2) | PM2 cluster | Host | Baseline - no Docker overhead |
+| gRPC bridge | Docker | Bridge + port mapping | Standard Docker deployment |
+| gRPC host | Docker | Host (`network_mode: host`) | Zero Docker network overhead |
+
+### macOS Limitation
+
+Trên macOS Docker Desktop, `network_mode: host` chia sẻ Linux VM network, không phải macOS host network. VM boundary (~0.3-1ms overhead) che mất lợi ích của host networking. Để có kết quả chính xác cho production, chạy trên Linux.
 
 ## Benchmark Results
 
@@ -144,8 +171,11 @@ Event loop lag: p50=0.00ms, p99=0.00ms, max=0.00ms
 Total messages: 177744
 ```
 
+*(Kết quả cũ 2 nhóm. Chạy lại benchmark với `./run-benchmark.sh` để có kết quả 3 nhóm mới.)*
+
 **Key findings**:
 - gRPC (Docker bridge) chậm hơn WS (host) khoảng **+0.001ms** ở mọi percentile
+- gRPC (Docker host) kết quả phụ thuộc platform — trên macOS ≈ bridge do VM overhead
 - Ở p99.9, cả hai gần như bằng nhau (~0.016ms)
 - Docker bridge network overhead rất nhỏ ở workload thấp (100 msg/s, 1KB)
 

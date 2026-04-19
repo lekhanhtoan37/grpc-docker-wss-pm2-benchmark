@@ -45,6 +45,13 @@ echo "Waiting 10s for gRPC containers..."
 sleep 10
 
 echo ""
+echo "--- Step 3b: Starting gRPC host-networked servers ---"
+cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml up -d --build
+cd "$BASEDIR"
+echo "Waiting 5s for host-networked gRPC containers..."
+sleep 5
+
+echo ""
 echo "--- Step 4: Starting WS servers ---"
 cd "$BASEDIR/ws-server"
 if ! pm2 describe ws-benchmark &>/dev/null; then
@@ -66,6 +73,10 @@ bash health-check.sh
 
 PRODUCER_PID=""
 
+cleanup_host() {
+  cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+}
+
 start_producer() {
   echo ""
   echo "--- Starting producer (background) ---"
@@ -83,7 +94,7 @@ stop_producer() {
   fi
 }
 
-trap stop_producer EXIT
+trap 'stop_producer; cleanup_host' EXIT
 
 echo ""
 echo "--- Step 7: Running $RUNS benchmark runs ---"
@@ -119,7 +130,7 @@ echo "--- Step 8: Collecting system info ---"
   pm2 show ws-benchmark
   echo ""
   echo "=== Docker Stats ==="
-  docker stats --no-stream grpc-server-1 grpc-server-2 grpc-server-3 2>/dev/null || true
+  docker stats --no-stream grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 2>/dev/null || true
 } > "$RESULTS_DIR/system-info-${TIMESTAMP}.log"
 
 echo ""

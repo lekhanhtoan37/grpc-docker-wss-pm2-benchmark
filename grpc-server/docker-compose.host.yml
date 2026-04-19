@@ -1,0 +1,33 @@
+services:
+  grpc-host-1:
+    build: .
+    container_name: grpc-host-1
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-1"
+      GRPC_PORT: "60051"
+      GRPC_HOST: "0.0.0.0"
+      KAFKA_BROKER: "localhost:9092"
+      KAFKA_TOPIC: "benchmark-messages"
+
+  grpc-host-2:
+    build: .
+    container_name: grpc-host-2
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-2"
+      GRPC_PORT: "60052"
+      GRPC_HOST: "0.0.0.0"
+      KAFKA_BROKER: "localhost:9092"
+      KAFKA_TOPIC: "benchmark-messages"
+
+  grpc-host-3:
+    build: .
+    container_name: grpc-host-3
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-3"
+      GRPC_PORT: "60053"
+      GRPC_HOST: "0.0.0.0"
+      KAFKA_BROKER: "localhost:9092"
+      KAFKA_TOPIC: "benchmark-messages"
