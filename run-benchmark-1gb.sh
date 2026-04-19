@@ -3,6 +3,19 @@ set -euo pipefail
 
 echo "=== 1GB/s Throughput Benchmark ==="
 
+# Resolve node/npm/pm2 PATH when running via sudo
+if [ -n "${SUDO_USER:-}" ]; then
+  SUDO_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  export NVM_DIR="${SUDO_HOME}/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  for p in "${SUDO_HOME}/.local/bin" "${SUDO_HOME}/.nvm/versions/node/default/bin" "/usr/local/bin"; do
+    [ -d "$p" ] && export PATH="$p:$PATH"
+  done
+fi
+
+command -v node >/dev/null || { echo "ERROR: node not found. Install Node.js first."; exit 1; }
+command -v npm >/dev/null || { echo "ERROR: npm not found. Install Node.js first."; exit 1; }
+
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-120}"
