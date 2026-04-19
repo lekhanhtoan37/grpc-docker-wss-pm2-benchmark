@@ -12,5 +12,5 @@ message StreamRequest {
 message StreamResponse {
   uint64 timestamp = 1;
   uint64 seq = 2;
-  string payload = 3;
+  bytes payload = 3;
 }

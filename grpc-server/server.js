@@ -43,17 +43,23 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
+      const parsed = new Array(batch.messages.length);
+      for (let i = 0; i < batch.messages.length; i++) {
+        const buf = batch.messages[i].value;
+        const str = buf.toString();
+        const raw = JSON.parse(str);
+        parsed[i] = {
+          timestamp: raw.timestamp,
+          seq: raw.seq,
+          payload: Buffer.from(str),
+        };
+      }
       const toDelete = [];
       for (const [call, paused] of activeStreams) {
         if (paused) continue;
         try {
-          for (const message of batch.messages) {
-            const raw = JSON.parse(message.value.toString());
-            const ok = call.write({
-              timestamp: raw.timestamp,
-              seq: raw.seq,
-              payload: message.value.toString(),
-            });
+          for (let i = 0; i < parsed.length; i++) {
+            const ok = call.write(parsed[i]);
             if (!ok) {
               activeStreams.set(call, true);
               break;
@@ -63,9 +69,7 @@ async function startConsumer() {
           toDelete.push(call);
         }
       }
-      for (const c of toDelete) {
-        activeStreams.delete(c);
-      }
+      for (const c of toDelete) activeStreams.delete(c);
     },
   });
 }

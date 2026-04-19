@@ -413,7 +413,7 @@ for run in $(seq 1 "$RUNS"); do
 
   start_producer
 
-  node --max-old-space-size=16384 "$BASEDIR/benchmark-client/client-throughput.js" \
+  "$BASEDIR/benchmark-client/go-client/benchmark-client" \
     --warmup "$WARMUP" --duration "$DURATION" \
     2>&1 | tee "$RESULTS_DIR/1gb-run-${run}-${TIMESTAMP}.log"
   echo ""

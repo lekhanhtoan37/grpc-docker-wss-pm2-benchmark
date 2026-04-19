@@ -32,18 +32,11 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
-      const payload = [];
-      for (const message of batch.messages) {
-        payload.push(message.value);
-      }
-      const raw = payload.length === 1 ? payload[0].toString() : null;
+      const msgs = batch.messages;
       for (const ws of clients) {
-        if (ws.readyState === 1) {
-          if (raw) {
-            ws.send(raw);
-          } else {
-            for (const p of payload) ws.send(p);
-          }
+        if (ws.readyState !== 1) continue;
+        for (let i = 0; i < msgs.length; i++) {
+          ws.send(msgs[i].value.toString());
         }
       }
     },
