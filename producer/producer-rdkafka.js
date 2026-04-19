@@ -9,7 +9,7 @@ const NUM_PARTITIONS = parseInt(process.env.NUM_PARTITIONS || "12", 10);
 const PAYLOAD_OVERHEAD = 40;
 const PADDING = "x".repeat(MSG_SIZE - PAYLOAD_OVERHEAD);
 
-const producer = new Kafka.HighLevelProducer({
+const producer = new Kafka.Producer({
   "metadata.broker.list": BROKER,
   "client.id": "benchmark-producer-rdkafka",
   "compression.codec": "lz4",
