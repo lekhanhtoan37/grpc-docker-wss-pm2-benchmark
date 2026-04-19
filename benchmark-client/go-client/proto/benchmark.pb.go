@@ -67,7 +67,7 @@ func (x *StreamRequest) GetClientId() string {
 
 type StreamResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Messages      [][]byte               `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -102,9 +102,9 @@ func (*StreamResponse) Descriptor() ([]byte, []int) {
 	return file_benchmark_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *StreamResponse) GetMessages() [][]byte {
+func (x *StreamResponse) GetData() []byte {
 	if x != nil {
-		return x.Messages
+		return x.Data
 	}
 	return nil
 }
@@ -115,9 +115,9 @@ const file_benchmark_proto_rawDesc = "" +
 	"\n" +
 	"\x0fbenchmark.proto\x12\tbenchmark\",\n" +
 	"\rStreamRequest\x12\x1b\n" +
-	"\tclient_id\x18\x01 \x01(\tR\bclientId\",\n" +
-	"\x0eStreamResponse\x12\x1a\n" +
-	"\bmessages\x18\x01 \x03(\fR\bmessages2[\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\"$\n" +
+	"\x0eStreamResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data2[\n" +
 	"\x10BenchmarkService\x12G\n" +
 	"\x0eStreamMessages\x12\x18.benchmark.StreamRequest\x1a\x19.benchmark.StreamResponse0\x01B#Z!github.com/benchmark-client/protob\x06proto3"
 

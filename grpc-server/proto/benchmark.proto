@@ -10,5 +10,5 @@ message StreamRequest {
 }
 
 message StreamResponse {
-  repeated bytes messages = 1;
+  bytes data = 1;
 }
