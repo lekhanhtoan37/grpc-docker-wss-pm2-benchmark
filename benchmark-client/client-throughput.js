@@ -128,7 +128,15 @@ async function main() {
       };
       const client = new benchmarkProto.BenchmarkService(
         GROUPS[gi].endpoints[ei], creds,
-        { "grpc.keepalive_time_ms": 30000, "grpc.keepalive_timeout_ms": 10000 }
+        {
+          "grpc.keepalive_time_ms": 30000,
+          "grpc.keepalive_timeout_ms": 10000,
+          "grpc.max_receive_message_length": 10485760,
+          "grpc.max_send_message_length": 10485760,
+          "grpc.http2.max_frame_size": 1048576,
+          "grpc.http2.initial_window_size": 8388608,
+          "grpc.http2.initial_connection_window_size": 8388608,
+        }
       );
       const stream = client.StreamMessages({ client_id: `bench-${gi}-${ei}` });
       stream.on("data", (resp) => {

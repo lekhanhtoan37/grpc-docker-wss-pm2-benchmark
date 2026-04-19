@@ -421,7 +421,15 @@ for run in $(seq 1 "$RUNS"); do
   stop_producer
 
   if [ "$run" -lt "$RUNS" ]; then
-    echo "Cooling down 15s..."
+    echo "Restarting Docker containers for next run..."
+    cd "$BASEDIR/grpc-server"
+    docker compose down 2>/dev/null || true
+    docker compose -f docker-compose.host.yml down 2>/dev/null || true
+    sleep 2
+    docker compose up -d
+    docker compose -f docker-compose.host.yml up -d
+    cd "$BASEDIR"
+    echo "Waiting 15s for containers + Kafka consumers..."
     sleep 15
   fi
 done

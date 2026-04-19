@@ -43,23 +43,26 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
+      const responses = [];
       for (const message of batch.messages) {
         const raw = JSON.parse(message.value.toString());
-        const response = {
+        responses.push({
           timestamp: raw.timestamp,
           seq: raw.seq,
           payload: message.value.toString(),
-        };
-        const toDelete = [];
-        for (const call of activeStreams) {
-          try {
-            call.write(response);
-          } catch {
-            toDelete.push(call);
-          }
-        }
-        for (const c of toDelete) activeStreams.delete(c);
+        });
       }
+      const toDelete = [];
+      for (const call of activeStreams) {
+        try {
+          for (const resp of responses) {
+            call.write(resp);
+          }
+        } catch {
+          toDelete.push(call);
+        }
+      }
+      for (const c of toDelete) activeStreams.delete(c);
     },
   });
 }
@@ -74,7 +77,13 @@ function streamMessages(call) {
 }
 
 async function run() {
-  const server = new grpc.Server();
+  const server = new grpc.Server({
+    "grpc.max_receive_message_length": 10485760,
+    "grpc.max_send_message_length": 10485760,
+    "grpc.http2.max_frame_size": 1048576,
+    "grpc.http2.initial_window_size": 8388608,
+    "grpc.http2.initial_connection_window_size": 8388608,
+  });
   server.addService(benchmarkProto.BenchmarkService.service, {
     StreamMessages: streamMessages,
   });
@@ -93,7 +102,6 @@ async function run() {
 
   startConsumer().catch((err) => {
     console.error(`[grpc:${CONTAINER_ID}] Kafka consumer error: ${err.message}`);
-    process.exit(1);
   });
 }
 
