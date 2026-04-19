@@ -15,10 +15,10 @@ const producer = new Kafka.Producer({
   "compression.codec": "lz4",
   "batch.size": 262144,
   "linger.ms": 20,
-  "acks": 1,
-  "queue.buffering.max.messages": 1000000,
-  "queue.buffering.max.kbytes": 524288,
-  "max.in.flight.requests.per.connection": 10,
+  "acks": 0,
+  "queue.buffering.max.messages": 500000,
+  "queue.buffering.max.kbytes": 1048576,
+  "max.in.flight.requests.per.connection": 20,
   "message.max.bytes": 10485760,
   "enable.idempotence": false,
 });
@@ -32,6 +32,7 @@ producer.on("ready", () => {
   console.log(`[producer] Connected to ${BROKER}`);
   console.log(`[producer] Target: ${TARGET_MBPS} MB/s, msg size: ${MSG_SIZE} bytes`);
   startTime = Date.now();
+  setInterval(() => { producer.poll(); }, 1000);
   produceLoop();
 });
 
@@ -40,11 +41,12 @@ producer.on("delivery-report", (err) => {
 });
 
 producer.on("event.error", (err) => {
+  if (err.code === -184) return;
   console.error(`[producer] Error: ${err.message}`);
 });
 
 function produceLoop() {
-  const BATCH_SIZE = 500;
+  const BATCH_SIZE = 200;
 
   for (let i = 0; i < BATCH_SIZE; i++) {
     const now = Date.now();
@@ -53,10 +55,20 @@ function produceLoop() {
     bytesSent += msg.length;
     messagesSent++;
     seq++;
-    producer.produce(TOPIC, partition, Buffer.from(msg), `msg-${seq}`);
+    try {
+      producer.produce(TOPIC, partition, Buffer.from(msg), `msg-${seq}`);
+    } catch (e) {
+      if (e.code === -184) {
+        messagesSent--;
+        bytesSent -= msg.length;
+        seq--;
+      } else {
+        throw e;
+      }
+    }
   }
 
-  if (messagesSent % 100000 === 0) {
+  if (messagesSent % 500000 === 0) {
     const elapsed = (Date.now() - startTime) / 1000;
     const mbps = (bytesSent / 1024 / 1024 / elapsed).toFixed(1);
     const rate = (messagesSent / elapsed).toFixed(0);
@@ -65,7 +77,7 @@ function produceLoop() {
 
   const elapsed = (Date.now() - startTime) / 1000;
   const currentMBps = bytesSent / 1024 / 1024 / elapsed;
-  const delay = currentMBps > TARGET_MBPS ? 1 : 0;
+  const delay = currentMBps > TARGET_MBPS ? 5 : 0;
 
   setTimeout(produceLoop, delay);
 }
@@ -74,8 +86,10 @@ const shutdown = () => {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   const mbps = (bytesSent / 1024 / 1024 / elapsed).toFixed(1);
   console.log(`\n[producer] Shutdown. ${messagesSent} msgs in ${elapsed}s (${mbps} MB/s)`);
-  producer.disconnect();
-  process.exit(0);
+  producer.flush(5000, () => {
+    producer.disconnect();
+    process.exit(0);
+  });
 };
 
 process.on("SIGINT", shutdown);

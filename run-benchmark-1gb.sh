@@ -222,10 +222,27 @@ else
 fi
 
 # ──────────────────────────────────────────────
-# Step 3: Build + start gRPC Docker
+# Step 3: iptables DNAT for Docker bridge → Kafka
 # ──────────────────────────────────────────────
 echo ""
-echo "--- Step 3: Build + start gRPC servers ---"
+echo "--- Step 3: Setup iptables for Docker bridge → Kafka ---"
+sudo sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
+DOCKER_GW=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || echo "172.17.0.1")
+echo "Docker bridge gateway: ${DOCKER_GW}"
+if ! sudo iptables -t nat -C PREROUTING -p tcp --dport 9091 -d "$DOCKER_GW" -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null; then
+  sudo iptables -t nat -A PREROUTING -p tcp --dport 9091 -d "$DOCKER_GW" -j DNAT --to-destination 127.0.0.1:9091
+  echo "DNAT rule added: ${DOCKER_GW}:9091 → 127.0.0.1:9091"
+else
+  echo "DNAT rule already exists."
+fi
+sudo iptables -C INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || \
+  sudo iptables -A INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT
+
+# ──────────────────────────────────────────────
+# Step 4: Build + start gRPC Docker
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4: Build + start gRPC servers ---"
 cd "$BASEDIR/grpc-server"
 docker compose build
 docker compose -f docker-compose.host.yml build
@@ -327,7 +344,7 @@ for run in $(seq 1 "$RUNS"); do
 done
 
 # ──────────────────────────────────────────────
-# Step 8: Collect system info
+# Step 9: Collect system info
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Step 8: Collect system info ---"
