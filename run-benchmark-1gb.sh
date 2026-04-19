@@ -187,6 +187,57 @@ SVC
   fi
 fi
 
+# ──────────────────────────────────────────────
+# Step 1b: Always update config + restart
+# ──────────────────────────────────────────────
+HOST_IP=$(hostname -I | awk '{print $1}')
+echo ""
+echo "--- Updating server.properties (host: ${HOST_IP}) ---"
+sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
+node.id=1
+process.roles=broker,controller
+listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
+controller.quorum.voters=1@127.0.0.1:9093
+log.dirs=/home/kafka-benchmark/data
+
+socket.send.buffer.bytes=1048576
+socket.receive.buffer.bytes=1048576
+socket.request.max.bytes=104857600
+
+log.segment.bytes=104857600
+num.partitions=12
+log.retention.ms=120000
+log.retention.bytes=1073741824
+log.cleanup.policy=delete
+log.cleanup.interval.ms=10000
+
+num.network.threads=8
+num.io.threads=8
+num.recovery.threads.per.data.dir=2
+
+delete.topic.enable=true
+auto.create.topics.enable=false
+PROPS
+
+echo "Restarting ${KAFKA_SERVICE}..."
+sudo systemctl restart "$KAFKA_SERVICE"
+echo "Waiting 10s for Kafka startup..."
+sleep 10
+
+if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null; then
+  echo "Kafka benchmark: active"
+else
+  echo "ERROR: Kafka benchmark failed to start."
+  echo "Check: sudo journalctl -u ${KAFKA_SERVICE} -n 50"
+  exit 1
+fi
+
+echo "Listeners:"
+sudo netstat -ntpl 2>/dev/null | grep 9091 || ss -ntpl | grep 9091
+
 # Verify port
 if nc -z 127.0.0.1 "$KAFKA_PORT" 2>/dev/null; then
   echo "Port 127.0.0.1:${KAFKA_PORT}: open"
