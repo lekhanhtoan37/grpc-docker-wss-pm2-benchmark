@@ -294,8 +294,8 @@ echo "--- Step 4: Build + start gRPC servers ---"
 cd "$BASEDIR/grpc-server"
 docker compose down 2>/dev/null || true
 docker compose -f docker-compose.host.yml down 2>/dev/null || true
-docker compose build
-docker compose -f docker-compose.host.yml build
+docker compose build --no-cache
+docker compose -f docker-compose.host.yml build --no-cache
 docker compose up -d
 cd "$BASEDIR"
 echo "Waiting 10s for gRPC bridge containers..."
@@ -336,6 +336,20 @@ echo ""
 echo "--- Step 6: Install deps ---"
 npm install --silent --prefix "$BASEDIR/benchmark-client"
 npm install --silent --prefix "$BASEDIR/producer"
+
+# ──────────────────────────────────────────────
+# Step 6b: Check container readiness
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Container Kafka consumer status ---"
+for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3; do
+  CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -c "Kafka consumer ready" || true)
+  echo "  $c: consumer_ready=$CONSUMER_READY"
+  if [ "$CONSUMER_READY" -eq 0 ]; then
+    echo "    Last 5 lines:"
+    docker logs "$c" 2>&1 | tail -5 | sed 's/^/      /'
+  fi
+done
 
 # ──────────────────────────────────────────────
 # Step 7: Run benchmark

@@ -7,7 +7,7 @@ const { performance, monitorEventLoopDelay } = require("node:perf_hooks");
 const PROTO_PATH = __dirname + "/proto/benchmark.proto";
 const WARMUP_DEFAULT = 30;
 const DURATION_DEFAULT = 120;
-const CONNECT_TIMEOUT = 10000;
+const CONNECT_TIMEOUT = 30000;
 
 const GROUPS = [
   {
@@ -147,13 +147,35 @@ async function main() {
 
   console.log("[client] Connecting to all endpoints...");
   const connectPromises = [];
+  const connectMap = [];
   for (let gi = 0; gi < GROUPS.length; gi++) {
     for (let ei = 0; ei < GROUPS[gi].endpoints.length; ei++) {
+      const idx = connectPromises.length;
       if (GROUPS[gi].type === "ws") connectPromises.push(connectWS(gi, ei));
       else connectPromises.push(connectGRPC(gi, ei));
+      connectMap.push({ gi, ei });
     }
   }
-  await Promise.all(connectPromises);
+  const results = await Promise.allSettled(connectPromises);
+  const failedGroups = new Set();
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === "rejected") {
+      const { gi } = connectMap[i];
+      failedGroups.add(gi);
+      console.error(`[client] ${GROUPS[connectMap[i].gi].name} #${connectMap[i].ei + 1} failed: ${results[i].reason}`);
+    }
+  }
+  if (failedGroups.size > 0) {
+    for (const gi of failedGroups) {
+      console.warn(`[client] WARNING: Skipping ${GROUPS[gi].name} - connection failed`);
+    }
+  }
+  const connectedCount = results.filter(r => r.status === "fulfilled").length;
+  if (connectedCount === 0) {
+    console.error("[client] No connections succeeded. Aborting.");
+    process.exit(1);
+  }
+  console.log(`[client] ${connectedCount}/${results.length} endpoints connected.`);
 
   console.log(`[client] All connected. Warmup for ${warmup}s...`);
   await new Promise((r) => setTimeout(r, warmup * 1000));
@@ -181,17 +203,21 @@ async function main() {
     const mbps = (totalBytes / 1024 / 1024 / measureDurationSec).toFixed(2);
     const msgPerSec = (totalMsgs / measureDurationSec).toFixed(0);
     throughputs.push(parseFloat(mbps));
+    const note = failedGroups.has(gi) ? " (FAILED)" : "";
     console.log(
-      `${GROUPS[gi].name.padEnd(16)} ${String(totalMsgs).padStart(10)} ${mbps.padStart(10)} ${msgPerSec.padStart(12)}`
+      `${(GROUPS[gi].name + note).padEnd(16)} ${String(totalMsgs).padStart(10)} ${mbps.padStart(10)} ${msgPerSec.padStart(12)}`
     );
   }
 
   const wsThroughput = throughputs[0];
-  console.log("-".repeat(50));
-  for (let gi = 1; gi < GROUPS.length; gi++) {
-    const delta = ((throughputs[gi] - wsThroughput) / wsThroughput * 100).toFixed(1);
-    const sign = delta >= 0 ? "+" : "";
-    console.log(`${GROUPS[gi].name.padEnd(16)} ${sign}${delta}% vs WS throughput`);
+  if (wsThroughput > 0) {
+    console.log("-".repeat(50));
+    for (let gi = 1; gi < GROUPS.length; gi++) {
+      if (failedGroups.has(gi)) continue;
+      const delta = ((throughputs[gi] - wsThroughput) / wsThroughput * 100).toFixed(1);
+      const sign = delta >= 0 ? "+" : "";
+      console.log(`${GROUPS[gi].name.padEnd(16)} ${sign}${delta}% vs WS throughput`);
+    }
   }
 
   console.log("\n=== LATENCY RESULTS ===\n");
