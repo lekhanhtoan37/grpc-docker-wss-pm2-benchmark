@@ -7,4 +7,4 @@ COPY server.js .
 COPY proto/ ./proto/
 ENV GRPC_PORT=50051
 ENV CONTAINER_ID=default
-CMD ["node", "--max-old-space-size=1024", "server.js"]
+CMD ["node", "--max-old-space-size=16384", "server.js"]

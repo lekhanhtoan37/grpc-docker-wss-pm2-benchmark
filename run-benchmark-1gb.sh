@@ -379,7 +379,7 @@ start_producer() {
   echo ""
   echo "--- Starting producer (target: ${TARGET_MBPS} MB/s) ---"
   KAFKA_BROKER=192.168.0.5:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
-    node "$BASEDIR/producer/producer-rdkafka.js" &
+    node --max-old-space-size=16384 "$BASEDIR/producer/producer-rdkafka.js" &
   PRODUCER_PID=$!
   echo "Producer PID: $PRODUCER_PID"
   echo "Waiting 5s for producer to ramp up..."
@@ -413,7 +413,7 @@ for run in $(seq 1 "$RUNS"); do
 
   start_producer
 
-  node "$BASEDIR/benchmark-client/client-throughput.js" \
+  node --max-old-space-size=16384 "$BASEDIR/benchmark-client/client-throughput.js" \
     --warmup "$WARMUP" --duration "$DURATION" \
     2>&1 | tee "$RESULTS_DIR/1gb-run-${run}-${TIMESTAMP}.log"
   echo ""
