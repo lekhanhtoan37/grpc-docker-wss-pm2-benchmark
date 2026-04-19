@@ -12,7 +12,7 @@ const PADDING = "x".repeat(MSG_SIZE - PAYLOAD_OVERHEAD);
 const producer = new Kafka.Producer({
   "metadata.broker.list": BROKER,
   "client.id": "benchmark-producer-rdkafka",
-  "compression.codec": "lz4",
+  "compression.codec": "none",
   "batch.size": 262144,
   "linger.ms": 20,
   "acks": 0,
