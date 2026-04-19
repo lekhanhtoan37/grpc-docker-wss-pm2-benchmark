@@ -107,8 +107,9 @@ func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupS
 				continue
 			}
 
-			now := float64(time.Now().UnixMilli())
-			latencyMicros := int64((now - msg.Timestamp) * 1000)
+			nowMicros := time.Now().UnixMicro()
+			tsMicros := int64(msg.Timestamp * 1000)
+			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
 				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(message))
 			}
@@ -170,9 +171,9 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 				continue
 			}
 
-			now := float64(time.Now().UnixMilli())
-			ts := float64(resp.GetTimestamp())
-			latencyMicros := int64((now - ts) * 1000)
+			nowMicros := time.Now().UnixMicro()
+			tsMicros := int64(resp.GetTimestamp()) * 1000
+			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
 				payload := resp.GetPayload()
 				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(payload))
