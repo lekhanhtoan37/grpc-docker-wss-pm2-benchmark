@@ -93,15 +93,16 @@ else
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_REAL_DIR}"
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
-  # Write server.properties (bind 0.0.0.0:9091 for Docker access)
-  echo "Writing server.properties (bind 0.0.0.0:${KAFKA_PORT})..."
-  sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<'PROPS'
+  # Write server.properties (dual listener: 127.0.0.1 for host, 172.17.0.1 for Docker)
+  echo "Writing server.properties (dual listener)..."
+  DOCKER_GW=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || echo "172.17.0.1")
+  sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://0.0.0.0:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091
+listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${DOCKER_GW}:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${DOCKER_GW}:9091
 controller.listener.names=CONTROLLER
-listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
 log.dirs=/home/kafka-benchmark/data
 

@@ -29,7 +29,7 @@ echo ""
 echo "--- Docker bridge → Kafka connectivity ---"
 check "route_localnet enabled" "sysctl net.ipv4.conf.all.route_localnet | grep '= 1'"
 check "DNAT rule exists" "iptables -t nat -L PREROUTING -n | grep 9091"
-check "Bridge container → Kafka" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'host.docker.internal',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
+check "Bridge container → Kafka" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'172.17.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
 
 echo ""
 echo "--- gRPC Servers (bridge) ---"
