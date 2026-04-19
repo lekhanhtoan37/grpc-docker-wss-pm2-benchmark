@@ -19,7 +19,7 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 });
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
-const activeStreams = new Map();
+const activeStreams = new Set();
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -55,15 +55,10 @@ async function startConsumer() {
         };
       }
       const toDelete = [];
-      for (const [call, paused] of activeStreams) {
-        if (paused) continue;
+      for (const call of activeStreams) {
         try {
           for (let i = 0; i < parsed.length; i++) {
-            const ok = call.write(parsed[i]);
-            if (!ok) {
-              activeStreams.set(call, true);
-              break;
-            }
+            call.write(parsed[i]);
           }
         } catch {
           toDelete.push(call);
@@ -75,14 +70,11 @@ async function startConsumer() {
 }
 
 function streamMessages(call) {
-  activeStreams.set(call, false);
+  activeStreams.add(call);
   console.log(`[grpc:${CONTAINER_ID}] Stream connected (total: ${activeStreams.size})`);
   call.on("cancelled", () => {
     activeStreams.delete(call);
     console.log(`[grpc:${CONTAINER_ID}] Stream cancelled (total: ${activeStreams.size})`);
-  });
-  call.on("drain", () => {
-    activeStreams.set(call, false);
   });
 }
 
