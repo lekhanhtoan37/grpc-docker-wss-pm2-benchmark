@@ -76,12 +76,13 @@ else
 
   # Data dir
   sudo mkdir -p "${KAFKA_DATA}"
-  sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DIR}"
+  KAFKA_REAL_DIR="$(readlink -f "${KAFKA_DIR}")"
+  sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_REAL_DIR}"
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
   # Write server.properties (always overwrite to ensure 127.0.0.1:9091)
   echo "Writing server.properties (bind 127.0.0.1:${KAFKA_PORT})..."
-  sudo -u "${KAFKA_USER}" tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<'PROPS'
+  sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<'PROPS'
 node.id=1
 process.roles=broker,controller
 listeners=PLAINTEXT://127.0.0.1:9091,CONTROLLER://127.0.0.1:9093
