@@ -67,89 +67,120 @@ func recordLatency(es *EndpointStats, latencyMicros int64, payloadLen int) {
 	es.hist.RecordValue(latencyMicros)
 }
 
-func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) error {
+func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	dialer := websocket.DefaultDialer
-	dialer.EnableCompression = false
-	conn, _, err := dialer.DialContext(ctx, endpoint, http.Header{})
-	if err != nil {
-		return fmt.Errorf("WS dial: %w", err)
-	}
-	defer conn.Close()
-
-	log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
-
 	for {
-		_, message, err := conn.ReadMessage()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		dialer := websocket.DefaultDialer
+		dialer.EnableCompression = false
+		conn, _, err := dialer.DialContext(ctx, endpoint, http.Header{})
 		if err != nil {
-			return fmt.Errorf("WS read: %w", err)
-		}
-
-		if !measuring.Load() {
+			log.Printf("[client] %s #%d connect failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		var msg struct {
-			Timestamp float64 `json:"timestamp"`
-		}
-		if err := json.Unmarshal(message, &msg); err != nil {
-			continue
+		log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
+
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				log.Printf("[client] %s #%d disconnected: %v, reconnecting...", groups[gi].Name, ei+1, err)
+				conn.Close()
+				break
+			}
+
+			if !measuring.Load() {
+				continue
+			}
+
+			var msg struct {
+				Timestamp float64 `json:"timestamp"`
+			}
+			if err := json.Unmarshal(message, &msg); err != nil {
+				continue
+			}
+
+			now := float64(time.Now().UnixMilli())
+			latencyMicros := int64((now - msg.Timestamp) * 1000)
+			if latencyMicros > 0 {
+				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(message))
+			}
 		}
 
-		now := float64(time.Now().UnixMilli())
-		latencyMicros := int64((now - msg.Timestamp) * 1000)
-		if latencyMicros > 0 {
-			recordLatency(stats[gi].endpoints[ei], latencyMicros, len(message))
-		}
+		conn.Close()
+		time.Sleep(2 * time.Second)
 	}
 }
 
-func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) error {
+func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	conn, err := grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithInitialWindowSize(67108864),
-		grpc.WithInitialConnWindowSize(134217728),
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(10485760),
-			grpc.MaxCallSendMsgSize(10485760),
-		),
-	)
-	if err != nil {
-		return fmt.Errorf("grpc dial: %w", err)
-	}
-	defer conn.Close()
-
-	client := pb.NewBenchmarkServiceClient(conn)
-	stream, err := client.StreamMessages(ctx, &pb.StreamRequest{ClientId: fmt.Sprintf("bench-%d-%d", gi, ei)})
-	if err != nil {
-		return fmt.Errorf("grpc stream: %w", err)
-	}
-
-	log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
-
 	for {
-		resp, err := stream.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("grpc recv: %w", err)
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 
-		if !measuring.Load() {
+		conn, err := grpc.NewClient(endpoint,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithInitialWindowSize(67108864),
+			grpc.WithInitialConnWindowSize(134217728),
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(10485760),
+				grpc.MaxCallSendMsgSize(10485760),
+			),
+		)
+		if err != nil {
+			log.Printf("[client] %s #%d dial failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		now := float64(time.Now().UnixMilli())
-		ts := float64(resp.GetTimestamp())
-		latencyMicros := int64((now - ts) * 1000)
-		if latencyMicros > 0 {
-			payload := resp.GetPayload()
-			recordLatency(stats[gi].endpoints[ei], latencyMicros, len(payload))
+		client := pb.NewBenchmarkServiceClient(conn)
+		stream, err := client.StreamMessages(ctx, &pb.StreamRequest{ClientId: fmt.Sprintf("bench-%d-%d", gi, ei)})
+		if err != nil {
+			log.Printf("[client] %s #%d stream failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			conn.Close()
+			time.Sleep(3 * time.Second)
+			continue
 		}
+
+		log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				conn.Close()
+				break
+			}
+			if err != nil {
+				log.Printf("[client] %s #%d recv error: %v, reconnecting...", groups[gi].Name, ei+1, err)
+				break
+			}
+
+			if !measuring.Load() {
+				continue
+			}
+
+			now := float64(time.Now().UnixMilli())
+			ts := float64(resp.GetTimestamp())
+			latencyMicros := int64((now - ts) * 1000)
+			if latencyMicros > 0 {
+				payload := resp.GetPayload()
+				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(payload))
+			}
+		}
+
+		conn.Close()
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -178,23 +209,15 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	failedGroups := make(map[int]bool)
 
 	for gi := range groups {
 		for ei := range groups[gi].Endpoints {
 			wg.Add(1)
-			go func(gi, ei int) {
-				var err error
-				if groups[gi].Type == "ws" {
-					err = connectWS(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
-				} else {
-					err = connectGRPC(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
-				}
-				if err != nil {
-					log.Printf("[client] %s #%d failed: %v", groups[gi].Name, ei+1, err)
-					failedGroups[gi] = true
-				}
-			}(gi, ei)
+			if groups[gi].Type == "ws" {
+				go connectWS(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
+			} else {
+				go connectGRPC(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
+			}
 		}
 	}
 
@@ -240,20 +263,13 @@ func main() {
 		mbps := float64(totalBytes) / 1024 / 1024 / measureDuration
 		msgPerSec := float64(totalMsgs) / measureDuration
 		throughputs[gi] = mbps
-		note := ""
-		if failedGroups[gi] {
-			note = " (FAILED)"
-		}
-		fmt.Printf("%-16s %10d %10.2f %12.0f\n", groups[gi].Name+note, totalMsgs, mbps, msgPerSec)
+		fmt.Printf("%-16s %10d %10.2f %12.0f\n", groups[gi].Name, totalMsgs, mbps, msgPerSec)
 	}
 
 	wsThroughput := throughputs[0]
 	if wsThroughput > 0 {
 		fmt.Println(strings.Repeat("-", 50))
 		for gi := 1; gi < len(groups); gi++ {
-			if failedGroups[gi] {
-				continue
-			}
 			delta := (throughputs[gi] - wsThroughput) / wsThroughput * 100
 			sign := ""
 			if delta >= 0 {

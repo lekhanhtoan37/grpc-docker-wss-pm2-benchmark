@@ -44,8 +44,8 @@ async function startConsumer() {
 }
 
 startConsumer().catch((err) => {
-  console.error(`[ws:${INSTANCE}] Kafka consumer error: ${err.message}`);
-  process.exit(1);
+  console.error(`[ws:${INSTANCE}] Kafka consumer error: ${err.message}, restarting in 5s...`);
+  setTimeout(startConsumer, 5000);
 });
 
 const server = http.createServer();
