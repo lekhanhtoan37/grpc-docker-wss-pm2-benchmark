@@ -228,18 +228,24 @@ echo ""
 echo "--- Step 3: Setup iptables for Docker bridge → Kafka ---"
 sudo sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
 
-# Match any traffic from docker0 to port 9091, redirect to 127.0.0.1
+# Clean stale rules (old format matching -d IP)
+sudo iptables -t nat -D PREROUTING -p tcp --dport 9091 -d 172.17.0.1 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
+
+# Insert BEFORE Docker's DOCKER chain rule (position 1)
 if ! sudo iptables -t nat -C PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null; then
   sudo iptables -t nat -I PREROUTING 1 -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
-  echo "DNAT rule inserted: docker0 → 127.0.0.1:9091"
+  echo "DNAT rule inserted at position 1 (before DOCKER chain)"
 else
-  echo "DNAT rule already exists."
+  # Rule exists but might be after DOCKER - move it to position 1
+  sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
+  sudo iptables -t nat -I PREROUTING 1 -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091
+  echo "DNAT rule moved to position 1"
 fi
 sudo iptables -C INPUT -i docker0 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || \
   sudo iptables -I INPUT 1 -i docker0 -p tcp --dport 9091 -j ACCEPT
 
-echo "Current NAT PREROUTING rules:"
-sudo iptables -t nat -L PREROUTING -n --line-numbers | head -10
+echo "NAT PREROUTING rules (our rule must be #1):"
+sudo iptables -t nat -L PREROUTING -n --line-numbers | head -5
 
 # ──────────────────────────────────────────────
 # Step 4: Build + start gRPC Docker
