@@ -1,6 +1,6 @@
 const { Kafka } = require("kafkajs");
 
-const BROKER = process.env.KAFKA_BROKER || "localhost:9092";
+const BROKER = process.env.KAFKA_BROKER || "localhost:9091";
 const TOPIC = "benchmark-messages";
 const RATE = 100;
 const INTERVAL_MS = 1000 / RATE;

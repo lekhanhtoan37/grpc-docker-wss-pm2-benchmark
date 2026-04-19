@@ -4,7 +4,7 @@ set -e
 echo "=== Starting WS vs gRPC Benchmark ==="
 
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
-KAFKA_BROKER="${KAFKA_BROKER:-localhost:9092}"
+KAFKA_BROKER="${KAFKA_BROKER:-localhost:9091}"
 WARMUP="${WARMUP:-60}"
 DURATION="${DURATION:-300}"
 RUNS="${RUNS:-3}"
@@ -28,10 +28,10 @@ docker exec benchmark-kafka kafka-topics --create \
   --partitions 1 \
   --replication-factor 1 \
   --if-not-exists \
-  --bootstrap-server localhost:9092
+  --bootstrap-server localhost:9091
 docker exec benchmark-kafka kafka-topics --describe \
   --topic benchmark-messages \
-  --bootstrap-server localhost:9092
+  --bootstrap-server localhost:9091
 
 echo ""
 echo "--- Step 2b: Installing producer deps ---"

@@ -4,7 +4,7 @@ set -e
 echo "=== WS vs gRPC Latency Benchmark - Health Check ==="
 echo ""
 
-KAFKA_BROKER="${KAFKA_BROKER:-localhost:9092}"
+KAFKA_BROKER="${KAFKA_BROKER:-localhost:9091}"
 PASS=0
 FAIL=0
 
