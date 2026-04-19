@@ -246,12 +246,11 @@ sleep 5
 echo ""
 echo "--- Step 4: Start WS servers (PM2) ---"
 cd "$BASEDIR/ws-server"
+npm install --silent
 if pm2 describe ws-benchmark &>/dev/null; then
-  pm2 restart ws-benchmark
-else
-  npm install --silent
-  pm2 start ecosystem.config.js
+  pm2 delete ws-benchmark 2>/dev/null || true
 fi
+pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for WS workers..."
 sleep 5
