@@ -21,6 +21,7 @@ WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-120}"
 RUNS="${RUNS:-3}"
 TARGET_MBPS="${TARGET_MBPS:-1000}"
+NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
 RESULTS_DIR="$BASEDIR/results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
@@ -373,25 +374,32 @@ done
 # ──────────────────────────────────────────────
 # Step 7: Run benchmark
 # ──────────────────────────────────────────────
-PRODUCER_PID=""
+PRODUCER_PIDS=""
 
 start_producer() {
   echo ""
-  echo "--- Starting producer (target: ${TARGET_MBPS} MB/s) ---"
-  KAFKA_BROKER=192.168.0.5:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
-    node --max-old-space-size=16384 "$BASEDIR/producer/producer-rdkafka.js" &
-  PRODUCER_PID=$!
-  echo "Producer PID: $PRODUCER_PID"
-  echo "Waiting 5s for producer to ramp up..."
+  echo "--- Starting $NUM_PRODUCERS producers (target: ${TARGET_MBPS} MB/s each) ---"
+  PRODUCER_PIDS=""
+  for i in $(seq 1 "$NUM_PRODUCERS"); do
+    KAFKA_BROKER=192.168.0.5:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
+      node --max-old-space-size=16384 "$BASEDIR/producer/producer-rdkafka.js" &
+    PRODUCER_PIDS="$PRODUCER_PIDS $!"
+  done
+  echo "Producer PIDs:$PRODUCER_PIDS"
+  echo "Waiting 5s for producers to ramp up..."
   sleep 5
 }
 
 stop_producer() {
-  if [ -n "$PRODUCER_PID" ] && kill -0 "$PRODUCER_PID" 2>/dev/null; then
-    echo "Stopping producer (PID: $PRODUCER_PID)..."
-    kill "$PRODUCER_PID" 2>/dev/null || true
-    wait "$PRODUCER_PID" 2>/dev/null || true
-  fi
+  for pid in $PRODUCER_PIDS; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in $PRODUCER_PIDS; do
+    wait "$pid" 2>/dev/null || true
+  done
+  PRODUCER_PIDS=""
 }
 
 cleanup() {

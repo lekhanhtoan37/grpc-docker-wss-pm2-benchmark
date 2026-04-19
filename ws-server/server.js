@@ -9,6 +9,8 @@ const INSTANCE = process.env.NODE_APP_INSTANCE || process.pid;
 const GROUP_ID = `ws-benchmark-worker-${INSTANCE}`;
 
 const clients = new Set();
+const YIELD_EVERY = 2000;
+const yieldLoop = () => new Promise((r) => setImmediate(r));
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -33,23 +35,39 @@ async function startConsumer() {
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch }) => {
       const msgs = batch.messages;
+      const len = msgs.length;
+      const toDelete = [];
       for (const ws of clients) {
         if (ws.readyState !== 1) continue;
-        for (let i = 0; i < msgs.length; i++) {
-          ws.send(msgs[i].value.toString());
+        try {
+          for (let i = 0; i < len; i++) {
+            ws.send(msgs[i].value.toString());
+            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
+          }
+        } catch {
+          toDelete.push(ws);
         }
+      }
+      for (const ws of toDelete) {
+        clients.delete(ws);
+        try { ws.close(); } catch {}
       }
     },
   });
 }
 
-startConsumer().catch((err) => {
-  console.error(`[ws:${INSTANCE}] Kafka consumer error: ${err.message}, restarting in 5s...`);
-  setTimeout(startConsumer, 5000);
-});
+const retryConsumer = async () => {
+  try {
+    await startConsumer();
+  } catch (err) {
+    console.error(`[ws:${INSTANCE}] Kafka consumer error: ${err.message}, restarting in 5s...`);
+    setTimeout(retryConsumer, 5000);
+  }
+};
+retryConsumer();
 
 const server = http.createServer();
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 0 });
 
 wss.on("connection", (ws) => {
   clients.add(ws);
@@ -58,6 +76,7 @@ wss.on("connection", (ws) => {
     clients.delete(ws);
     console.log(`[ws:${INSTANCE}] Client disconnected (total: ${clients.size})`);
   });
+  ws.on("error", () => {});
 });
 
 server.listen(PORT, () => {
