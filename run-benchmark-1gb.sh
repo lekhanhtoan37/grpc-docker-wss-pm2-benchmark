@@ -121,6 +121,9 @@ num.recovery.threads.per.data.dir=2
 
 delete.topic.enable=true
 auto.create.topics.enable=false
+
+group.coordinator.new.enable=false
+offsets.topic.replication.factor=1
 PROPS
 
   # Format KRaft storage (skip if already formatted)
@@ -217,12 +220,28 @@ num.recovery.threads.per.data.dir=2
 
 delete.topic.enable=true
 auto.create.topics.enable=false
+
+group.coordinator.new.enable=false
+offsets.topic.replication.factor=1
 PROPS
 
-echo "Restarting ${KAFKA_SERVICE}..."
-sudo systemctl restart "$KAFKA_SERVICE"
-echo "Waiting 10s for Kafka startup..."
-sleep 10
+echo "Stopping Kafka and cleaning KRaft data..."
+sudo systemctl stop "$KAFKA_SERVICE" 2>/dev/null || true
+sleep 2
+sudo rm -rf "${KAFKA_DATA}"/*
+sudo chown "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
+
+echo "Formatting KRaft storage..."
+KAFKA_CLUSTER_ID=$(sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" random-uuid)
+echo "Cluster ID: ${KAFKA_CLUSTER_ID}"
+sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" format \
+  -t "$KAFKA_CLUSTER_ID" \
+  -c "${KAFKA_DIR}/config/kraft/server.properties"
+
+echo "Starting ${KAFKA_SERVICE}..."
+sudo systemctl start "$KAFKA_SERVICE"
+echo "Waiting 15s for Kafka startup..."
+sleep 15
 
 if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null; then
   echo "Kafka benchmark: active"
