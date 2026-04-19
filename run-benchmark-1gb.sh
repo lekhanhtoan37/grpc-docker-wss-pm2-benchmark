@@ -94,13 +94,12 @@ else
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
   # Write server.properties (dual listener: 127.0.0.1 for host, 172.17.0.1 for Docker)
-  HOST_IP=$(hostname -I | awk '{print $1}')
-  echo "Writing server.properties (host: ${HOST_IP})..."
+  echo "Writing server.properties (host: 192.168.0.5)..."
   sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091
+listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://192.168.0.5:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
@@ -190,9 +189,8 @@ fi
 # ──────────────────────────────────────────────
 # Step 1b: Always update config + restart
 # ──────────────────────────────────────────────
-HOST_IP=192.168.0.5
 echo ""
-echo "--- Updating server.properties (host: ${HOST_IP}) ---"
+echo "--- Updating server.properties (host: 192.168.0.5) ---"
 sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
@@ -280,18 +278,18 @@ fi
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Step 3: Setup iptables ---"
-HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP=192.168.0.5
 
 # Remove old rules
 sudo iptables -D INPUT -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
 sudo iptables -D INPUT -i docker0 -d 127.0.0.1 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
-sudo iptables -D INPUT -i docker0 -d "${HOST_IP}" -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
+sudo iptables -D INPUT -i docker0 -d 192.168.0.5 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -p tcp --dport 9091 -d 172.17.0.1 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
 
 # Allow Docker containers → Kafka on host IP
-sudo iptables -I INPUT 1 -s 172.16.0.0/12 -d "${HOST_IP}" -p tcp --dport 9091 -j ACCEPT
-echo "iptables: allow 172.16.0.0/12 → ${HOST_IP}:9091"
+sudo iptables -I INPUT 1 -s 172.16.0.0/12 -d 192.168.0.5 -p tcp --dport 9091 -j ACCEPT
+echo "iptables: allow 172.16.0.0/12 → 192.168.0.5:9091"
 
 # ──────────────────────────────────────────────
 # Step 4: Build + start gRPC Docker
