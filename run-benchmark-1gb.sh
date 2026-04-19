@@ -11,7 +11,7 @@ TARGET_MBPS="${TARGET_MBPS:-1000}"
 RESULTS_DIR="$BASEDIR/results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
-KAFKA_VERSION="3.9.0"
+KAFKA_VERSION="3.9.2"
 SCALA_VERSION="2.13"
 KAFKA_DIR="/opt/kafka-benchmark"
 KAFKA_DATA="/var/lib/kafka-benchmark/data"
@@ -50,7 +50,16 @@ else
   if [ ! -d "${KAFKA_DIR}" ]; then
     echo "Downloading Kafka ${KAFKA_VERSION}..."
     local_tar="kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz"
-    curl -LO "https://downloads.apache.org/kafka/${KAFKA_VERSION}/${local_tar}"
+    local_url="https://downloads.apache.org/kafka/${KAFKA_VERSION}/${local_tar}"
+    curl -fSL -o "${local_tar}" "${local_url}"
+    file_size=$(stat -c%s "${local_tar}" 2>/dev/null || stat -f%z "${local_tar}" 2>/dev/null || echo 0)
+    if [ "$file_size" -lt 1000000 ]; then
+      echo "ERROR: Downloaded file too small (${file_size} bytes). URL may be wrong."
+      echo "URL: ${local_url}"
+      echo "Try available versions: https://downloads.apache.org/kafka/"
+      rm -f "${local_tar}"
+      exit 1
+    fi
     sudo tar -xzf "${local_tar}" -C /opt/
     sudo ln -s "/opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION}" "${KAFKA_DIR}"
     rm -f "${local_tar}"

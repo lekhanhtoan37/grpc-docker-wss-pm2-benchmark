@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-KAFKA_VERSION="3.9.0"
+KAFKA_VERSION="3.9.2"
 SCALA_VERSION="2.13"
 KAFKA_DIR="/opt/kafka-benchmark"
 KAFKA_DATA="/var/lib/kafka-benchmark/data"
@@ -26,7 +26,7 @@ if [ -d "${KAFKA_DIR}" ]; then
   echo "Kafka benchmark already installed at ${KAFKA_DIR}. Skipping download."
 else
   echo "Downloading Kafka..."
-  curl -LO "https://downloads.apache.org/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz"
+  curl -fSL -o "kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz" "https://downloads.apache.org/kafka/${KAFKA_VERSION}/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz"
   sudo tar -xzf "kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz" -C /opt/
   sudo ln -s "/opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION}" "${KAFKA_DIR}"
   rm "kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz"
