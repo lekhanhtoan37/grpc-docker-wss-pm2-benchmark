@@ -7,7 +7,7 @@ module.exports = {
       exec_mode: "cluster",
       max_memory_restart: "1G",
       env: {
-        PORT: 8080,
+        PORT: 8090,
         KAFKA_BROKER: "127.0.0.1:9091",
         KAFKA_TOPIC: "benchmark-messages",
         UV_THREADPOOL_SIZE: "16",

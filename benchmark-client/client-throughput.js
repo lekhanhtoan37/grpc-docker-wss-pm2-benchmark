@@ -13,7 +13,7 @@ const GROUPS = [
   {
     name: "WS (host/PM2)",
     type: "ws",
-    endpoints: ["ws://localhost:8080", "ws://localhost:8080", "ws://localhost:8080"],
+    endpoints: ["ws://127.0.0.1:8090", "ws://127.0.0.1:8090", "ws://127.0.0.1:8090"],
   },
   {
     name: "gRPC bridge",

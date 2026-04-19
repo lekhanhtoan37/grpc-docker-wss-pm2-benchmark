@@ -43,7 +43,7 @@ check "PM2 ws-benchmark" "pm2 describe ws-benchmark"
 
 echo ""
 echo "--- WS Connectivity ---"
-check "WS :8080" "cd '$(dirname "$0")/ws-server' && node -e \"const ws=new(require('ws'))('ws://127.0.0.1:8080');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)\""
+check "WS :8090" "cd '$(dirname "$0")/ws-server' && node -e \"const ws=new(require('ws'))('ws://127.0.0.1:8090');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)\""
 
 echo ""
 echo "--- Docker ---"
