@@ -94,13 +94,13 @@ else
   sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
 
   # Write server.properties (dual listener: 127.0.0.1 for host, 172.17.0.1 for Docker)
-  echo "Writing server.properties (dual listener)..."
-  DOCKER_GW=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || echo "172.17.0.1")
+  HOST_IP=$(hostname -I | awk '{print $1}')
+  echo "Writing server.properties (host: ${HOST_IP})..."
   sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
 node.id=1
 process.roles=broker,controller
-listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${DOCKER_GW}:9091,CONTROLLER://127.0.0.1:9093
-advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${DOCKER_GW}:9091
+listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://127.0.0.1:9091,DOCKER://${HOST_IP}:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
@@ -225,13 +225,22 @@ fi
 # ──────────────────────────────────────────────
 # Step 3: iptables DNAT for Docker bridge → Kafka
 # ──────────────────────────────────────────────
-# Step 3: Clean up old DNAT rules (no longer needed)
+# Step 3: Cleanup + iptables for Docker → Kafka
 # ──────────────────────────────────────────────
 echo ""
-echo "--- Step 3: Cleanup ---"
+echo "--- Step 3: Setup iptables ---"
+HOST_IP=$(hostname -I | awk '{print $1}')
+
+# Remove old rules
+sudo iptables -D INPUT -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
+sudo iptables -D INPUT -i docker0 -d 127.0.0.1 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
+sudo iptables -D INPUT -i docker0 -d "${HOST_IP}" -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -p tcp --dport 9091 -d 172.17.0.1 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
 sudo iptables -t nat -D PREROUTING -i docker0 -p tcp --dport 9091 -j DNAT --to-destination 127.0.0.1:9091 2>/dev/null || true
-echo "Old DNAT rules cleaned."
+
+# Allow Docker containers → Kafka on host IP
+sudo iptables -I INPUT 1 -s 172.16.0.0/12 -d "${HOST_IP}" -p tcp --dport 9091 -j ACCEPT
+echo "iptables: allow 172.16.0.0/12 → ${HOST_IP}:9091"
 
 # ──────────────────────────────────────────────
 # Step 4: Build + start gRPC Docker
