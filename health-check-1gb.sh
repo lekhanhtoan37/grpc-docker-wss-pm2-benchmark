@@ -27,9 +27,9 @@ check "Topic benchmark-messages" "/opt/kafka-benchmark/bin/kafka-topics.sh --des
 
 echo ""
 echo "--- Docker bridge → Kafka connectivity ---"
-check "route_localnet enabled" "sysctl net.ipv4.conf.all.route_localnet | grep '= 1'"
-check "DNAT rule exists" "iptables -t nat -L PREROUTING -n | grep 9091"
-check "Bridge container → Kafka" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'192.168.0.5',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
+HOST_IP=$(hostname -I | awk '{print $1}')
+check "iptables allow Docker→Kafka" "iptables -L INPUT -n | grep 9091"
+check "Bridge container → Kafka (${HOST_IP}:9091)" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'${HOST_IP}',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
 
 echo ""
 echo "--- gRPC Servers (bridge) ---"

@@ -248,6 +248,8 @@ echo "iptables: allow 172.16.0.0/12 → ${HOST_IP}:9091"
 echo ""
 echo "--- Step 4: Build + start gRPC servers ---"
 cd "$BASEDIR/grpc-server"
+docker compose down 2>/dev/null || true
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
 docker compose build
 docker compose -f docker-compose.host.yml build
 docker compose up -d
