@@ -21,10 +21,6 @@ const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
 
-const drain = (call) => new Promise((resolve) => {
-  call.once("drain", resolve);
-});
-
 let batchCount = 0;
 let totalMsgsIn = 0;
 let totalMsgsOut = 0;
@@ -67,19 +63,21 @@ async function startConsumer() {
       const len = msgs.length;
       batchCount++;
       totalMsgsIn += len;
+      const entries = new Array(len);
+      for (let i = 0; i < len; i++) {
+        entries[i] = {
+          timestamp: Number(msgs[i].timestamp) || 0,
+          seq: 0,
+          payload: msgs[i].value,
+        };
+      }
       const toDelete = [];
       for (const call of activeStreams) {
         try {
-          for (let i = 0; i < len; i++) {
-            const ok = call.write({
-              timestamp: Number(msgs[i].timestamp) || 0,
-              seq: 0,
-              payload: msgs[i].value,
-            });
-            if (!ok) {
-              drainWaits++;
-              await drain(call);
-            }
+          const ok = call.write({ messages: entries });
+          if (!ok) {
+            drainWaits++;
+            await new Promise((r) => call.once("drain", r));
           }
           totalMsgsOut += len;
         } catch {
