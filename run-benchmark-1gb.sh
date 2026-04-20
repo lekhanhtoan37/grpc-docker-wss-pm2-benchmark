@@ -10,10 +10,12 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
   export NVM_DIR="${PM2_HOME_USER}/.nvm"
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
   NVM_BIN="$(ls -d "${PM2_HOME_USER}/.nvm/versions/node/"*/bin 2>/dev/null | tail -1)"
-  for p in "${PM2_HOME_USER}/.local/bin" "$NVM_BIN" "/usr/local/bin"; do
+  for p in "${PM2_HOME_USER}/.local/bin" "$NVM_BIN" "/usr/local/bin" "/usr/local/go/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
   done
 fi
+
+[ -d "/usr/local/go/bin" ] && export PATH="/usr/local/go/bin:$PATH"
 
 command -v node >/dev/null || { echo "ERROR: node not found. Install Node.js first."; exit 1; }
 command -v npm >/dev/null || { echo "ERROR: npm not found. Install Node.js first."; exit 1; }
