@@ -21,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	pb "benchmark-client/proto"
 )
@@ -32,9 +33,11 @@ type Group struct {
 }
 
 type EndpointStats struct {
-	hist   *hdrhistogram.Histogram
-	count  atomic.Int64
-	bytes  atomic.Int64
+	hist     *hdrhistogram.Histogram
+	count    atomic.Int64
+	bytes    atomic.Int64
+	rawCount atomic.Int64
+	rawBytes atomic.Int64
 }
 
 type GroupStats struct {
@@ -167,6 +170,10 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 				break
 			}
 
+			es := stats[gi].endpoints[ei]
+			es.rawCount.Add(1)
+			es.rawBytes.Add(int64(proto.Size(resp)))
+
 			if !measuring.Load() {
 				continue
 			}
@@ -176,7 +183,7 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 			tsMicros := int64(resp.GetTimestamp() * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
-				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(raw))
+				recordLatency(es, latencyMicros, len(raw))
 			}
 		}
 
@@ -250,7 +257,7 @@ func main() {
 
 	measureDuration := measureEnd.Sub(measureStart).Seconds()
 
-	fmt.Println("\n=== THROUGHPUT RESULTS ===\n")
+	fmt.Println("\n=== THROUGHPUT RESULTS (processed) ===\n")
 	fmt.Printf("%-16s %10s %10s %12s\n", "Group", "Msgs", "MB/s", "msg/s")
 	fmt.Println(strings.Repeat("-", 50))
 
@@ -265,6 +272,28 @@ func main() {
 		msgPerSec := float64(totalMsgs) / measureDuration
 		throughputs[gi] = mbps
 		fmt.Printf("%-16s %10d %10.2f %12.0f\n", groups[gi].Name, totalMsgs, mbps, msgPerSec)
+	}
+
+	fmt.Println("\n=== RAW RECV STATS (gRPC only) ===\n")
+	fmt.Printf("%-16s %10s %10s %12s %10s\n", "Group", "Raw Msgs", "Raw MB/s", "Raw msg/s", "Drop %")
+	fmt.Println(strings.Repeat("-", 60))
+	for gi := range groups {
+		if groups[gi].Type != "grpc" {
+			continue
+		}
+		var totalRaw, totalRawBytes, totalProcessed int64
+		for ei := 0; ei < 3; ei++ {
+			totalRaw += stats[gi].endpoints[ei].rawCount.Load()
+			totalRawBytes += stats[gi].endpoints[ei].rawBytes.Load()
+			totalProcessed += stats[gi].endpoints[ei].count.Load()
+		}
+		rawMbs := float64(totalRawBytes) / 1024 / 1024 / measureDuration
+		rawMsgSec := float64(totalRaw) / measureDuration
+		dropPct := 0.0
+		if totalRaw > 0 {
+			dropPct = float64(totalRaw-totalProcessed) / float64(totalRaw) * 100
+		}
+		fmt.Printf("%-16s %10d %10.2f %12.0f %9.1f%%\n", groups[gi].Name, totalRaw, rawMbs, rawMsgSec, dropPct)
 	}
 
 	wsThroughput := throughputs[0]
@@ -316,12 +345,19 @@ func main() {
 		for ei := 0; ei < 3; ei++ {
 			es := stats[gi].endpoints[ei]
 			count := es.count.Load()
-			bytes := es.bytes.Load()
-			mbps := float64(bytes) / 1024 / 1024 / measureDuration
+			bts := es.bytes.Load()
+			mbps := float64(bts) / 1024 / 1024 / measureDuration
 			p50 := float64(es.hist.ValueAtPercentile(50)) / 1000.0
 			p99 := float64(es.hist.ValueAtPercentile(99)) / 1000.0
-			fmt.Printf("  %s #%d: %d msgs, %.2f MB/s, p50=%.3f p99=%.3f\n",
-				groups[gi].Name, ei+1, count, mbps, p50, p99)
+			raw := es.rawCount.Load()
+			if groups[gi].Type == "grpc" && raw > 0 {
+				dropPct := float64(raw-count) / float64(raw) * 100
+				fmt.Printf("  %s #%d: %d msgs (raw=%d, drop=%.1f%%), %.2f MB/s, p50=%.3f p99=%.3f\n",
+					groups[gi].Name, ei+1, count, raw, dropPct, mbps, p50, p99)
+			} else {
+				fmt.Printf("  %s #%d: %d msgs, %.2f MB/s, p50=%.3f p99=%.3f\n",
+					groups[gi].Name, ei+1, count, mbps, p50, p99)
+			}
 		}
 	}
 
