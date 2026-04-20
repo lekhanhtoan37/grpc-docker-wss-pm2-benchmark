@@ -388,6 +388,45 @@ for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-
 done
 
 # ──────────────────────────────────────────────
+# Step 6c: Quick Kafka verify (produce + consume 1 msg)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Quick Kafka verify: produce + consume 1 message ---"
+VERIFY_TOPIC="__bench_verify_$$"
+"${KAFKA_DIR}/bin/kafka-topics.sh" --create \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.5:${KAFKA_PORT}" \
+  --partitions 1 --replication-factor 1 \
+  --config retention.ms=60000 \
+  --if-not-exists 2>/dev/null || true
+echo "test-message-$(date +%s)" | "${KAFKA_DIR}/bin/kafka-console-producer.sh" \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.5:${KAFKA_PORT}" \
+  --property "parse.key=false" 2>/dev/null
+VERIFY_MSG=$("${KAFKA_DIR}/bin/kafka-console-consumer.sh" \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.5:${KAFKA_PORT}" \
+  --from-beginning --max-messages 1 --timeout-ms 10000 2>/dev/null | head -1)
+if [ -n "$VERIFY_MSG" ]; then
+  echo "  PASS Kafka produce+consume verified: '$VERIFY_MSG'"
+else
+  echo "  WARN Kafka consume returned empty (broker may still be settling)"
+fi
+"${KAFKA_DIR}/bin/kafka-topics.sh" --delete \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null || true
+
+# ──────────────────────────────────────────────
+# Step 6d: Verify benchmark-messages topic has data
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Verify benchmark-messages topic ---"
+"${KAFKA_DIR}/bin/kafka-run-class.sh" kafka.tools.GetOffsetShell \
+  --broker-list "192.168.0.5:${KAFKA_PORT}" \
+  --topic benchmark-messages 2>/dev/null | head -20
+echo ""
+
+# ──────────────────────────────────────────────
 # Step 7: Run benchmark
 # ──────────────────────────────────────────────
 PRODUCER_PIDS=""
@@ -436,6 +475,15 @@ for run in $(seq 1 "$RUNS"); do
   echo "=== Run $run/$RUNS ($(date)) ==="
 
   start_producer
+
+  echo "--- Server diagnostics (after producers started) ---"
+  for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3; do
+    echo "  === $c (last 10 lines) ==="
+    docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
+  done
+  echo "  === WS server (pm2 logs, last 10 lines) ==="
+  run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+  echo "--- End server diagnostics ---"
 
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
     --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
