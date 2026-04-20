@@ -33,11 +33,13 @@ type Group struct {
 }
 
 type ConnStats struct {
-	hist     *hdrhistogram.Histogram
-	count    atomic.Int64
-	bytes    atomic.Int64
-	rawCount atomic.Int64
-	rawBytes atomic.Int64
+	hist       *hdrhistogram.Histogram
+	count      atomic.Int64
+	bytes      atomic.Int64
+	rawCount   atomic.Int64
+	rawBytes   atomic.Int64
+	firstMsg   atomic.Bool
+	connActive atomic.Bool
 }
 
 type GroupStats struct {
@@ -92,13 +94,20 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		}
 
 		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
+		stats[gi].conns[ci].connActive.Store(true)
 
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				log.Printf("[client] %s conn#%d disconnected: %v, reconnecting...", groups[gi].Name, ci+1, err)
+				stats[gi].conns[ci].connActive.Store(false)
 				conn.Close()
 				break
+			}
+
+			if !stats[gi].conns[ci].firstMsg.Load() {
+				stats[gi].conns[ci].firstMsg.Store(true)
+				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(message))
 			}
 
 			if !measuring.Load() {
@@ -109,6 +118,11 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				Timestamp float64 `json:"timestamp"`
 			}
 			if err := json.Unmarshal(message, &msg); err != nil {
+				log.Printf("[client] %s conn#%d JSON parse error: %v (msg len=%d)", groups[gi].Name, ci+1, err, len(message))
+				continue
+			}
+
+			if msg.Timestamp == 0 {
 				continue
 			}
 
@@ -160,15 +174,19 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 		}
 
 		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
+		stats[gi].conns[ci].connActive.Store(true)
 
 		for {
 			resp, err := stream.Recv()
 			if err == io.EOF {
+				log.Printf("[client] %s conn#%d stream EOF", groups[gi].Name, ci+1)
+				stats[gi].conns[ci].connActive.Store(false)
 				conn.Close()
 				break
 			}
 			if err != nil {
 				log.Printf("[client] %s conn#%d recv error: %v, reconnecting...", groups[gi].Name, ci+1, err)
+				stats[gi].conns[ci].connActive.Store(false)
 				break
 			}
 
@@ -177,13 +195,22 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			sz := int64(proto.Size(resp))
 			cs.rawBytes.Add(sz)
 
+			if !cs.firstMsg.Load() {
+				cs.firstMsg.Store(true)
+				log.Printf("[client] %s conn#%d FIRST MSG (size=%d, ts=%.3f, seq=%d)", groups[gi].Name, ci+1, sz, resp.GetTimestamp(), resp.GetSeq())
+			}
+
 			if !measuring.Load() {
 				continue
 			}
 
-			// raw := resp.GetPayload()
+			ts := resp.GetTimestamp()
+			if ts == 0 {
+				continue
+			}
+
 			nowMicros := time.Now().UnixMicro()
-			tsMicros := int64(resp.GetTimestamp() * 1000)
+			tsMicros := int64(ts * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
 				recordLatency(cs, latencyMicros, int(sz))
@@ -213,10 +240,32 @@ func aggregateGroup(gs *GroupStats) (totalMsgs, totalBytes, totalRaw, totalRawBy
 	return
 }
 
+func printLiveStats(groups []Group, stats []*GroupStats, measuring *atomic.Bool) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		if !measuring.Load() {
+			continue
+		}
+		for gi := range groups {
+			totalRaw, totalMsgs := int64(0), int64(0)
+			active := 0
+			for _, cs := range stats[gi].conns {
+				totalRaw += cs.rawCount.Load()
+				totalMsgs += cs.count.Load()
+				if cs.connActive.Load() {
+					active++
+				}
+			}
+			log.Printf("[live] %s: active=%d raw=%d processed=%d", groups[gi].Name, active, totalRaw, totalMsgs)
+		}
+	}
+}
+
 func main() {
 	warmup := flag.Int("warmup", 30, "warmup seconds")
 	duration := flag.Int("duration", 120, "measurement seconds")
-	conns := flag.Int("conns", 20, "connections per group")
+	conns := flag.Int("conns", 1, "connections per group")
 	flag.Parse()
 
 	log.Printf("[client] Warmup: %ds, Measurement: %ds, Conns/group: %d", *warmup, *duration, *conns)
@@ -252,6 +301,32 @@ func main() {
 
 	log.Printf("[client] %d total connections across %d groups connecting...", totalConns, len(groups))
 	time.Sleep(5 * time.Second)
+
+	activeConns := 0
+	for gi := range groups {
+		for _, cs := range stats[gi].conns {
+			if cs.connActive.Load() {
+				activeConns++
+			}
+		}
+	}
+	log.Printf("[client] %d/%d connections active after 5s", activeConns, totalConns)
+
+	if activeConns == 0 {
+		log.Printf("[client] WARNING: no active connections! Waiting 10s more...")
+		time.Sleep(10 * time.Second)
+		activeConns = 0
+		for gi := range groups {
+			for _, cs := range stats[gi].conns {
+				if cs.connActive.Load() {
+					activeConns++
+				}
+			}
+		}
+		log.Printf("[client] %d/%d connections active after retry", activeConns, totalConns)
+	}
+
+	go printLiveStats(groups, stats, &measuring)
 
 	log.Printf("[client] Warmup for %ds...", *warmup)
 	select {
@@ -349,16 +424,35 @@ func main() {
 	}
 	fmt.Printf("╚══════════╩════════════╩══════════════╩══════════════╩════════════╩════════════╝\n")
 
-	fmt.Println("\nPer-group connection summary:")
+	fmt.Println("\nPer-connection breakdown:")
 	for gi := range groups {
-		totalMsgs, totalBytes, totalRaw, _ := aggregateGroup(stats[gi])
-		fmt.Printf("  %s (%d conns): %d msgs, %.2f MB/s",
-			groups[gi].Name, *conns, totalMsgs, float64(totalBytes)/1024/1024/measureDuration)
-		if groups[gi].Type == "grpc" && totalRaw > 0 {
-			dropPct := float64(totalRaw-totalMsgs) / float64(totalRaw) * 100
-			fmt.Printf(", raw=%d, drop=%.1f%%", totalRaw, dropPct)
+		for ci := range stats[gi].conns {
+			cs := stats[gi].conns[ci]
+			count := cs.count.Load()
+			bts := cs.bytes.Load()
+			raw := cs.rawCount.Load()
+			active := cs.connActive.Load()
+			epIdx := ci % len(groups[gi].Endpoints)
+			mbps := float64(bts) / 1024 / 1024 / measureDuration
+			p50 := float64(cs.hist.ValueAtPercentile(50)) / 1000.0
+			p99 := float64(cs.hist.ValueAtPercentile(99)) / 1000.0
+			status := "ACTIVE"
+			if !active {
+				status = "DEAD"
+			}
+			first := "yes"
+			if !cs.firstMsg.Load() {
+				first = "NO"
+			}
+			extra := ""
+			if groups[gi].Type == "grpc" && raw > 0 {
+				dropPct := float64(raw-count) / float64(raw) * 100
+				extra = fmt.Sprintf(", raw=%d, drop=%.1f%%", raw, dropPct)
+			}
+			fmt.Printf("  %s conn#%d (ep#%d %s) [%s][first=%s]: %d msgs, %.2f MB/s, p50=%.3f p99=%.3f%s\n",
+				groups[gi].Name, ci+1, epIdx+1, groups[gi].Endpoints[epIdx], status, first,
+				count, mbps, p50, p99, extra)
 		}
-		fmt.Println()
 	}
 
 	var grandMsgs, grandBytes int64
