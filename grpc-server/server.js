@@ -20,20 +20,23 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
-const YIELD_EVERY = 500;
-const yieldLoop = () => new Promise((r) => setImmediate(r));
+
+const drain = (call) => new Promise((resolve) => {
+  call.once("drain", resolve);
+});
 
 let batchCount = 0;
 let totalMsgsIn = 0;
 let totalMsgsOut = 0;
+let drainWaits = 0;
 const startTime = Date.now();
 
 setInterval(() => {
   const elapsed = (Date.now() - startTime) / 1000;
   if (elapsed > 0) {
     console.log(
-      `[grpc:${CONTAINER_ID}] batches=${batchCount} msgs_in=${totalMsgsIn} msgs_out=${totalMsgsOut} ` +
-      `in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeStreams.size}`
+      `[grpc:${CONTAINER_ID}] batches=${batchCount} in=${totalMsgsIn} out=${totalMsgsOut} ` +
+      `drains=${drainWaits} in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeStreams.size}`
     );
   }
 }, 5000);
@@ -68,12 +71,15 @@ async function startConsumer() {
       for (const call of activeStreams) {
         try {
           for (let i = 0; i < len; i++) {
-            call.write({
+            const ok = call.write({
               timestamp: Number(msgs[i].timestamp) || 0,
               seq: 0,
               payload: msgs[i].value,
             });
-            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
+            if (!ok) {
+              drainWaits++;
+              await drain(call);
+            }
           }
           totalMsgsOut += len;
         } catch {
