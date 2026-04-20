@@ -171,16 +171,9 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 				continue
 			}
 
-			raw := resp.GetData()
-			var msg struct {
-				Timestamp float64 `json:"timestamp"`
-			}
-			if err := json.Unmarshal(raw, &msg); err != nil {
-				continue
-			}
-
+			raw := resp.GetPayload()
 			nowMicros := time.Now().UnixMicro()
-			tsMicros := int64(msg.Timestamp * 1000)
+			tsMicros := int64(resp.GetTimestamp() * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
 				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(raw))

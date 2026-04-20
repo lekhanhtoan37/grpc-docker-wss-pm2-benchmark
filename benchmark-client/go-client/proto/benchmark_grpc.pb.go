@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: benchmark.proto
+// source: proto/benchmark.proto
 
 package proto
 
@@ -120,5 +120,5 @@ var BenchmarkService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "benchmark.proto",
+	Metadata: "proto/benchmark.proto",
 }
