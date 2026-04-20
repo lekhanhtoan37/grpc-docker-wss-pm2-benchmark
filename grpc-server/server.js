@@ -20,6 +20,9 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
+const YIELD_EVERY = 500;
+const yieldLoop = () => new Promise((r) => setImmediate(r));
+
 let batchCount = 0;
 let totalMsgsIn = 0;
 let totalMsgsOut = 0;
@@ -70,6 +73,7 @@ async function startConsumer() {
               seq: 0,
               payload: msgs[i].value,
             });
+            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
           }
           totalMsgsOut += len;
         } catch {
