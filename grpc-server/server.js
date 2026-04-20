@@ -47,28 +47,15 @@ async function startConsumer() {
     eachBatch: async ({ batch }) => {
       const msgs = batch.messages;
       const len = msgs.length;
-      const parsed = new Array(len);
-      for (let i = 0; i < len; i++) {
-        try {
-          const obj = JSON.parse(msgs[i].value.toString());
-          parsed[i] = {
-            timestamp: obj.timestamp || 0,
-            seq: obj.seq || 0,
-            payload: Buffer.from(obj.data || ""),
-          };
-        } catch {
-          parsed[i] = {
-            timestamp: 0,
-            seq: i,
-            payload: msgs[i].value,
-          };
-        }
-      }
       const toDelete = [];
       for (const call of activeStreams) {
         try {
           for (let i = 0; i < len; i++) {
-            call.write(parsed[i]);
+            call.write({
+              timestamp: Number(msgs[i].timestamp) || 0,
+              seq: 0,
+              payload: msgs[i].value,
+            });
             if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
           }
         } catch {

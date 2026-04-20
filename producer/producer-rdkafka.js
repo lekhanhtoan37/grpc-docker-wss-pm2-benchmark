@@ -56,7 +56,7 @@ function produceLoop() {
     messagesSent++;
     seq++;
     try {
-      producer.produce(TOPIC, partition, Buffer.from(msg), `msg-${seq}`);
+      producer.produce(TOPIC, partition, Buffer.from(msg), `msg-${seq}`, Date.now());
     } catch (e) {
       if (e.code === -184) {
         messagesSent--;
