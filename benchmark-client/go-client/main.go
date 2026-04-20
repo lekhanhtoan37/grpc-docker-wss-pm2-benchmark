@@ -71,7 +71,6 @@ func newGroupStats(conns int) *GroupStats {
 func recordLatency(cs *ConnStats, latencyMicros int64, payloadLen int) {
 	cs.count.Add(1)
 	cs.bytes.Add(int64(payloadLen))
-	cs.hist.RecordValue(latencyMicros)
 }
 
 func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
@@ -122,15 +121,14 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				continue
 			}
 
-			if msg.Timestamp == 0 {
-				continue
-			}
-
 			nowMicros := time.Now().UnixMicro()
 			tsMicros := int64(msg.Timestamp * 1000)
 			latencyMicros := nowMicros - tsMicros
+			cs := stats[gi].conns[ci]
+			cs.count.Add(1)
+			cs.bytes.Add(int64(len(message)))
 			if latencyMicros > 0 {
-				recordLatency(stats[gi].conns[ci], latencyMicros, len(message))
+				cs.hist.RecordValue(latencyMicros)
 			}
 		}
 
@@ -205,15 +203,12 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			}
 
 			ts := resp.GetTimestamp()
-			if ts == 0 {
-				continue
-			}
-
 			nowMicros := time.Now().UnixMicro()
 			tsMicros := int64(ts * 1000)
 			latencyMicros := nowMicros - tsMicros
+			recordLatency(cs, latencyMicros, int(sz))
 			if latencyMicros > 0 {
-				recordLatency(cs, latencyMicros, int(sz))
+				cs.hist.RecordValue(latencyMicros)
 			}
 		}
 
