@@ -20,6 +20,20 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
+let batchCount = 0;
+let totalMsgsIn = 0;
+let totalMsgsOut = 0;
+const startTime = Date.now();
+
+setInterval(() => {
+  const elapsed = (Date.now() - startTime) / 1000;
+  if (elapsed > 0) {
+    console.log(
+      `[grpc:${CONTAINER_ID}] batches=${batchCount} msgs_in=${totalMsgsIn} msgs_out=${totalMsgsOut} ` +
+      `in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeStreams.size}`
+    );
+  }
+}, 5000);
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -45,18 +59,19 @@ async function startConsumer() {
     eachBatch: async ({ batch }) => {
       const msgs = batch.messages;
       const len = msgs.length;
-      const entries = new Array(len);
-      for (let i = 0; i < len; i++) {
-        entries[i] = {
-          timestamp: Number(msgs[i].timestamp) || 0,
-          seq: 0,
-          payload: msgs[i].value,
-        };
-      }
+      batchCount++;
+      totalMsgsIn += len;
       const toDelete = [];
       for (const call of activeStreams) {
         try {
-          call.write({ messages: entries });
+          for (let i = 0; i < len; i++) {
+            call.write({
+              timestamp: Number(msgs[i].timestamp) || 0,
+              seq: 0,
+              payload: msgs[i].value,
+            });
+          }
+          totalMsgsOut += len;
         } catch {
           toDelete.push(call);
         }

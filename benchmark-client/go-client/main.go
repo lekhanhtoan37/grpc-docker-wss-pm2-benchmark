@@ -171,13 +171,12 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 				continue
 			}
 
-			for _, entry := range resp.GetMessages() {
-				nowMicros := time.Now().UnixMicro()
-				tsMicros := int64(entry.GetTimestamp() * 1000)
-				latencyMicros := nowMicros - tsMicros
-				if latencyMicros > 0 {
-					recordLatency(stats[gi].endpoints[ei], latencyMicros, len(entry.GetPayload()))
-				}
+			raw := resp.GetPayload()
+			nowMicros := time.Now().UnixMicro()
+			tsMicros := int64(resp.GetTimestamp() * 1000)
+			latencyMicros := nowMicros - tsMicros
+			if latencyMicros > 0 {
+				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(raw))
 			}
 		}
 

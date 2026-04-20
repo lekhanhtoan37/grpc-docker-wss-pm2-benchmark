@@ -166,13 +166,10 @@ async function main() {
           done();
         }
         if (!measuring) return;
-        const entries = resp.messages || [];
-        for (const entry of entries) {
-          const now = performance.timeOrigin + performance.now();
-          const latencyMicros = Math.round((now - Number(entry.timestamp)) * 1000);
-          if (latencyMicros > 0) histograms[gi][ei].recordValue(latencyMicros);
-          counts[gi][ei]++;
-        }
+        const now = performance.timeOrigin + performance.now();
+        const latencyMicros = Math.round((now - Number(resp.timestamp)) * 1000);
+        if (latencyMicros > 0) histograms[gi][ei].recordValue(latencyMicros);
+        counts[gi][ei]++;
       });
       stream.on("error", (err) => {
         if (!resolved) { clearTimeout(timeout); reject(err); }

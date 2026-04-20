@@ -144,10 +144,7 @@ async function main() {
           console.log(`[client] ${GROUPS[gi].name} #${ei + 1} connected`);
           done();
         }
-        const entries = resp.messages || [];
-        for (const entry of entries) {
-          handleMessage(gi, ei, entry.payload, Number(entry.timestamp));
-        }
+        handleMessage(gi, ei, resp.payload, Number(resp.timestamp));
       });
       stream.on("error", (err) => {
         if (!resolved) { clearTimeout(timeout); reject(err); }
