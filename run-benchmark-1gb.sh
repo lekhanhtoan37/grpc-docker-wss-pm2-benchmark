@@ -15,10 +15,16 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
   done
 fi
 
-PM2_RUN="sudo -u $PM2_USER PATH=\"$PATH\" PM2_HOME=\"${PM2_HOME_USER}/.pm2\" pm2"
-
 command -v node >/dev/null || { echo "ERROR: node not found. Install Node.js first."; exit 1; }
 command -v npm >/dev/null || { echo "ERROR: npm not found. Install Node.js first."; exit 1; }
+
+run_as_user() {
+  sudo -u "$PM2_USER" env PATH="$PATH" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
+}
+
+run_pm2() {
+  run_as_user pm2 "$@"
+}
 
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 WARMUP="${WARMUP:-30}"
@@ -337,9 +343,9 @@ sleep 5
 echo ""
 echo "--- Step 4: Start WS servers (PM2) ---"
 cd "$BASEDIR/ws-server"
-sudo -u "$PM2_USER" PATH="$PATH" npm install --silent
-$PM2_RUN describe ws-benchmark &>/dev/null && $PM2_RUN delete ws-benchmark 2>/dev/null || true
-$PM2_RUN start ecosystem.config.js
+run_as_user npm install --silent
+run_pm2 describe ws-benchmark &>/dev/null && run_pm2 delete ws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for WS workers..."
 sleep 5
@@ -410,7 +416,7 @@ cleanup() {
   stop_producer
   cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
   cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
-  $PM2_RUN stop ws-benchmark 2>/dev/null || true
+  run_pm2 stop ws-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -455,7 +461,7 @@ echo "--- Step 8: Collect system info ---"
   echo "Kernel: $(uname -a)"
   echo "Node: $(node --version)"
   echo "Docker: $(docker --version)"
-  echo "PM2: $($PM2_RUN --version 2>/dev/null || echo 'not found')"
+  echo "PM2: $(run_pm2 --version 2>/dev/null || echo 'not found')"
   echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
   echo "Kafka benchmark port: 192.168.0.5:${KAFKA_PORT}"
   echo ""
@@ -463,7 +469,7 @@ echo "--- Step 8: Collect system info ---"
   "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null || true
   echo ""
   echo "=== PM2 Metrics ==="
-  $PM2_RUN show ws-benchmark 2>/dev/null || true
+  run_pm2 show ws-benchmark 2>/dev/null || true
   echo ""
   echo "=== Docker Stats ==="
   docker stats --no-stream grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 2>/dev/null || true
