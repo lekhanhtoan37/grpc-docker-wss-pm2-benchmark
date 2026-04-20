@@ -364,6 +364,7 @@ echo ""
 echo "--- Step 6: Install deps ---"
 npm install --silent --prefix "$BASEDIR/benchmark-client"
 npm install --silent --prefix "$BASEDIR/producer"
+npm rebuild --silent --prefix "$BASEDIR/producer"
 
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness
