@@ -423,7 +423,7 @@ echo ""
 echo "--- Verify benchmark-messages topic ---"
 "${KAFKA_DIR}/bin/kafka-run-class.sh" kafka.tools.GetOffsetShell \
   --broker-list "192.168.0.5:${KAFKA_PORT}" \
-  --topic benchmark-messages 2>/dev/null | head -20
+  --topic benchmark-messages 2>/dev/null | head -20 || echo "  (no offsets yet - topic is empty, normal before producers start)"
 echo ""
 
 # ──────────────────────────────────────────────
