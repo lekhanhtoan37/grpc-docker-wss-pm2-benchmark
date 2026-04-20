@@ -362,10 +362,16 @@ bash "$BASEDIR/health-check-1gb.sh"
 # Step 6: Install deps
 # ──────────────────────────────────────────────
 echo ""
-echo "--- Step 6: Install deps ---"
+echo "--- Step 6: Install deps + build Go client ---"
 npm install --silent --prefix "$BASEDIR/benchmark-client"
 npm install --silent --prefix "$BASEDIR/producer"
 npm rebuild --silent --prefix "$BASEDIR/producer"
+if command -v go >/dev/null 2>&1; then
+  echo "Building Go benchmark client..."
+  (cd "$BASEDIR/benchmark-client/go-client" && go build -o benchmark-client .)
+else
+  echo "WARNING: go not found, using pre-built binary"
+fi
 
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness
@@ -373,7 +379,7 @@ npm rebuild --silent --prefix "$BASEDIR/producer"
 echo ""
 echo "--- Container Kafka consumer status ---"
 for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3; do
-  CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -c "Kafka consumer ready" || true)
+  CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -cE "Kafka consumer (connected|ready)" || true)
   echo "  $c: consumer_ready=$CONSUMER_READY"
   if [ "$CONSUMER_READY" -eq 0 ]; then
     echo "    Last 5 lines:"
