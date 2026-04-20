@@ -153,13 +153,11 @@ async function startConsumer() {
       batchCount++;
       totalMsgsIn += len;
 
-      let msgIdx = 0;
       for (const writer of activeStreams.values()) {
         for (let i = 0; i < len; i++) {
-          const parsed = parsePayload(msgs[i].value);
           writer.enqueue({
-            timestamp: parsed ? parsed.timestamp : Number(msgs[i].timestamp) || 0,
-            seq: parsed ? parsed.seq || 0 : 0,
+            timestamp: Number(msgs[i].timestamp) || 0,
+            seq: 0,
             payload: msgs[i].value,
           });
         }
