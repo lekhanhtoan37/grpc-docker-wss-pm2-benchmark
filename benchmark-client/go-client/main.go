@@ -32,7 +32,7 @@ type Group struct {
 	Endpoints []string
 }
 
-type EndpointStats struct {
+type ConnStats struct {
 	hist     *hdrhistogram.Histogram
 	count    atomic.Int64
 	bytes    atomic.Int64
@@ -41,7 +41,7 @@ type EndpointStats struct {
 }
 
 type GroupStats struct {
-	endpoints [3]*EndpointStats
+	conns []*ConnStats
 }
 
 var groups = []Group{
@@ -50,27 +50,29 @@ var groups = []Group{
 	{Name: "gRPC host", Type: "grpc", Endpoints: []string{"localhost:60051", "localhost:60052", "localhost:60053"}},
 }
 
-func newEndpointStats() *EndpointStats {
-	return &EndpointStats{
+func newConnStats() *ConnStats {
+	return &ConnStats{
 		hist: hdrhistogram.New(1, 60000000, 3),
 	}
 }
 
-func newGroupStats() *GroupStats {
-	gs := &GroupStats{}
-	for i := range gs.endpoints {
-		gs.endpoints[i] = newEndpointStats()
+func newGroupStats(conns int) *GroupStats {
+	gs := &GroupStats{
+		conns: make([]*ConnStats, conns),
+	}
+	for i := range gs.conns {
+		gs.conns[i] = newConnStats()
 	}
 	return gs
 }
 
-func recordLatency(es *EndpointStats, latencyMicros int64, payloadLen int) {
-	es.count.Add(1)
-	es.bytes.Add(int64(payloadLen))
-	es.hist.RecordValue(latencyMicros)
+func recordLatency(cs *ConnStats, latencyMicros int64, payloadLen int) {
+	cs.count.Add(1)
+	cs.bytes.Add(int64(payloadLen))
+	cs.hist.RecordValue(latencyMicros)
 }
 
-func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
+func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
@@ -84,17 +86,17 @@ func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupS
 		dialer.EnableCompression = false
 		conn, _, err := dialer.DialContext(ctx, endpoint, http.Header{})
 		if err != nil {
-			log.Printf("[client] %s #%d connect failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			log.Printf("[client] %s conn#%d connect failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
+		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
 
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				log.Printf("[client] %s #%d disconnected: %v, reconnecting...", groups[gi].Name, ei+1, err)
+				log.Printf("[client] %s conn#%d disconnected: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				conn.Close()
 				break
 			}
@@ -114,7 +116,7 @@ func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupS
 			tsMicros := int64(msg.Timestamp * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
-				recordLatency(stats[gi].endpoints[ei], latencyMicros, len(message))
+				recordLatency(stats[gi].conns[ci], latencyMicros, len(message))
 			}
 		}
 
@@ -123,7 +125,7 @@ func connectWS(ctx context.Context, gi, ei int, endpoint string, stats []*GroupS
 	}
 }
 
-func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
+func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
@@ -143,21 +145,21 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 			),
 		)
 		if err != nil {
-			log.Printf("[client] %s #%d dial failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			log.Printf("[client] %s conn#%d dial failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
 		client := pb.NewBenchmarkServiceClient(conn)
-		stream, err := client.StreamMessages(ctx, &pb.StreamRequest{ClientId: fmt.Sprintf("bench-%d-%d", gi, ei)})
+		stream, err := client.StreamMessages(ctx, &pb.StreamRequest{ClientId: fmt.Sprintf("bench-%d-%d", gi, ci)})
 		if err != nil {
-			log.Printf("[client] %s #%d stream failed: %v, retrying in 3s...", groups[gi].Name, ei+1, err)
+			log.Printf("[client] %s conn#%d stream failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			conn.Close()
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		log.Printf("[client] %s #%d connected", groups[gi].Name, ei+1)
+		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
 
 		for {
 			resp, err := stream.Recv()
@@ -166,13 +168,13 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 				break
 			}
 			if err != nil {
-				log.Printf("[client] %s #%d recv error: %v, reconnecting...", groups[gi].Name, ei+1, err)
+				log.Printf("[client] %s conn#%d recv error: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				break
 			}
 
-			es := stats[gi].endpoints[ei]
-			es.rawCount.Add(1)
-			es.rawBytes.Add(int64(proto.Size(resp)))
+			cs := stats[gi].conns[ci]
+			cs.rawCount.Add(1)
+			cs.rawBytes.Add(int64(proto.Size(resp)))
 
 			if !measuring.Load() {
 				continue
@@ -183,7 +185,7 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 			tsMicros := int64(resp.GetTimestamp() * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
-				recordLatency(es, latencyMicros, len(raw))
+				recordLatency(cs, latencyMicros, len(raw))
 			}
 		}
 
@@ -192,20 +194,31 @@ func connectGRPC(ctx context.Context, gi, ei int, endpoint string, stats []*Grou
 	}
 }
 
-func mergeEndpointHistograms(gs *GroupStats) *hdrhistogram.Histogram {
+func mergeGroupHistogram(gs *GroupStats) *hdrhistogram.Histogram {
 	merged := hdrhistogram.New(1, 60000000, 3)
-	for _, es := range gs.endpoints {
-		merged.Merge(es.hist)
+	for _, cs := range gs.conns {
+		merged.Merge(cs.hist)
 	}
 	return merged
+}
+
+func aggregateGroup(gs *GroupStats) (totalMsgs, totalBytes, totalRaw, totalRawBytes int64) {
+	for _, cs := range gs.conns {
+		totalMsgs += cs.count.Load()
+		totalBytes += cs.bytes.Load()
+		totalRaw += cs.rawCount.Load()
+		totalRawBytes += cs.rawBytes.Load()
+	}
+	return
 }
 
 func main() {
 	warmup := flag.Int("warmup", 30, "warmup seconds")
 	duration := flag.Int("duration", 120, "measurement seconds")
+	conns := flag.Int("conns", 20, "connections per group")
 	flag.Parse()
 
-	log.Printf("[client] Warmup: %ds, Measurement: %ds", *warmup, *duration)
+	log.Printf("[client] Warmup: %ds, Measurement: %ds, Conns/group: %d", *warmup, *duration, *conns)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -213,18 +226,22 @@ func main() {
 	var measuring atomic.Bool
 	stats := make([]*GroupStats, len(groups))
 	for i := range stats {
-		stats[i] = newGroupStats()
+		stats[i] = newGroupStats(*conns)
 	}
 
+	totalConns := 0
 	var wg sync.WaitGroup
 
 	for gi := range groups {
-		for ei := range groups[gi].Endpoints {
+		epCount := len(groups[gi].Endpoints)
+		for ci := 0; ci < *conns; ci++ {
+			endpoint := groups[gi].Endpoints[ci%epCount]
 			wg.Add(1)
+			totalConns++
 			if groups[gi].Type == "ws" {
-				go connectWS(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
+				go connectWS(ctx, gi, ci, endpoint, stats, &measuring, &wg)
 			} else {
-				go connectGRPC(ctx, gi, ei, groups[gi].Endpoints[ei], stats, &measuring, &wg)
+				go connectGRPC(ctx, gi, ci, endpoint, stats, &measuring, &wg)
 			}
 		}
 	}
@@ -232,8 +249,8 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	log.Printf("[client] %d endpoints connecting...", len(groups)*3)
-	time.Sleep(3 * time.Second)
+	log.Printf("[client] %d total connections across %d groups connecting...", totalConns, len(groups))
+	time.Sleep(5 * time.Second)
 
 	log.Printf("[client] Warmup for %ds...", *warmup)
 	select {
@@ -258,20 +275,16 @@ func main() {
 	measureDuration := measureEnd.Sub(measureStart).Seconds()
 
 	fmt.Println("\n=== THROUGHPUT RESULTS (processed) ===\n")
-	fmt.Printf("%-16s %10s %10s %12s\n", "Group", "Msgs", "MB/s", "msg/s")
-	fmt.Println(strings.Repeat("-", 50))
+	fmt.Printf("%-16s %8s %12s %10s %12s\n", "Group", "Conns", "Msgs", "MB/s", "msg/s")
+	fmt.Println(strings.Repeat("-", 60))
 
 	throughputs := make([]float64, len(groups))
 	for gi := range groups {
-		var totalMsgs, totalBytes int64
-		for ei := 0; ei < 3; ei++ {
-			totalMsgs += stats[gi].endpoints[ei].count.Load()
-			totalBytes += stats[gi].endpoints[ei].bytes.Load()
-		}
+		totalMsgs, totalBytes, _, _ := aggregateGroup(stats[gi])
 		mbps := float64(totalBytes) / 1024 / 1024 / measureDuration
 		msgPerSec := float64(totalMsgs) / measureDuration
 		throughputs[gi] = mbps
-		fmt.Printf("%-16s %10d %10.2f %12.0f\n", groups[gi].Name, totalMsgs, mbps, msgPerSec)
+		fmt.Printf("%-16s %8d %12d %10.2f %12.0f\n", groups[gi].Name, *conns, totalMsgs, mbps, msgPerSec)
 	}
 
 	fmt.Println("\n=== RAW RECV STATS (gRPC only) ===\n")
@@ -281,24 +294,19 @@ func main() {
 		if groups[gi].Type != "grpc" {
 			continue
 		}
-		var totalRaw, totalRawBytes, totalProcessed int64
-		for ei := 0; ei < 3; ei++ {
-			totalRaw += stats[gi].endpoints[ei].rawCount.Load()
-			totalRawBytes += stats[gi].endpoints[ei].rawBytes.Load()
-			totalProcessed += stats[gi].endpoints[ei].count.Load()
-		}
+		totalMsgs, _, totalRaw, totalRawBytes := aggregateGroup(stats[gi])
 		rawMbs := float64(totalRawBytes) / 1024 / 1024 / measureDuration
 		rawMsgSec := float64(totalRaw) / measureDuration
 		dropPct := 0.0
 		if totalRaw > 0 {
-			dropPct = float64(totalRaw-totalProcessed) / float64(totalRaw) * 100
+			dropPct = float64(totalRaw-totalMsgs) / float64(totalRaw) * 100
 		}
 		fmt.Printf("%-16s %10d %10.2f %12.0f %9.1f%%\n", groups[gi].Name, totalRaw, rawMbs, rawMsgSec, dropPct)
 	}
 
 	wsThroughput := throughputs[0]
 	if wsThroughput > 0 {
-		fmt.Println(strings.Repeat("-", 50))
+		fmt.Println(strings.Repeat("-", 60))
 		for gi := 1; gi < len(groups); gi++ {
 			delta := (throughputs[gi] - wsThroughput) / wsThroughput * 100
 			sign := ""
@@ -312,7 +320,7 @@ func main() {
 	fmt.Println("\n=== LATENCY RESULTS ===\n")
 	groupMerged := make([]*hdrhistogram.Histogram, len(groups))
 	for gi := range groups {
-		groupMerged[gi] = mergeEndpointHistograms(stats[gi])
+		groupMerged[gi] = mergeGroupHistogram(stats[gi])
 	}
 
 	percentiles := []string{"p50", "p75", "p90", "p95", "p99", "p99.9"}
@@ -340,35 +348,26 @@ func main() {
 	}
 	fmt.Printf("╚══════════╩════════════╩══════════════╩══════════════╩════════════╩════════════╝\n")
 
-	fmt.Println("\nPer-endpoint breakdown:")
+	fmt.Println("\nPer-group connection summary:")
 	for gi := range groups {
-		for ei := 0; ei < 3; ei++ {
-			es := stats[gi].endpoints[ei]
-			count := es.count.Load()
-			bts := es.bytes.Load()
-			mbps := float64(bts) / 1024 / 1024 / measureDuration
-			p50 := float64(es.hist.ValueAtPercentile(50)) / 1000.0
-			p99 := float64(es.hist.ValueAtPercentile(99)) / 1000.0
-			raw := es.rawCount.Load()
-			if groups[gi].Type == "grpc" && raw > 0 {
-				dropPct := float64(raw-count) / float64(raw) * 100
-				fmt.Printf("  %s #%d: %d msgs (raw=%d, drop=%.1f%%), %.2f MB/s, p50=%.3f p99=%.3f\n",
-					groups[gi].Name, ei+1, count, raw, dropPct, mbps, p50, p99)
-			} else {
-				fmt.Printf("  %s #%d: %d msgs, %.2f MB/s, p50=%.3f p99=%.3f\n",
-					groups[gi].Name, ei+1, count, mbps, p50, p99)
-			}
+		totalMsgs, totalBytes, totalRaw, _ := aggregateGroup(stats[gi])
+		fmt.Printf("  %s (%d conns): %d msgs, %.2f MB/s",
+			groups[gi].Name, *conns, totalMsgs, float64(totalBytes)/1024/1024/measureDuration)
+		if groups[gi].Type == "grpc" && totalRaw > 0 {
+			dropPct := float64(totalRaw-totalMsgs) / float64(totalRaw) * 100
+			fmt.Printf(", raw=%d, drop=%.1f%%", totalRaw, dropPct)
 		}
+		fmt.Println()
 	}
 
-	var totalMsgs, totalBytes int64
+	var grandMsgs, grandBytes int64
 	for gi := range groups {
-		for ei := 0; ei < 3; ei++ {
-			totalMsgs += stats[gi].endpoints[ei].count.Load()
-			totalBytes += stats[gi].endpoints[ei].bytes.Load()
-		}
+		msgs, bts, _, _ := aggregateGroup(stats[gi])
+		grandMsgs += msgs
+		grandBytes += bts
 	}
-	fmt.Printf("\nAggregate: %d msgs, %.2f MB\n", totalMsgs, float64(totalBytes)/1024/1024)
+	fmt.Printf("\nAggregate: %d msgs, %.2f MB across %d groups x %d conns\n",
+		grandMsgs, float64(grandBytes)/1024/1024, len(groups), *conns)
 	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
