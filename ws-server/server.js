@@ -41,6 +41,7 @@ async function startConsumer() {
         if (ws.readyState !== 1) continue;
         try {
           for (let i = 0; i < len; i++) {
+            JSON.parse(msgs[i].value.toString());
             ws.send(msgs[i].value.toString());
             if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
           }
