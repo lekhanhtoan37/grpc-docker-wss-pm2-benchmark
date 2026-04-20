@@ -178,7 +178,7 @@ async function startConsumer() {
       for (const c of toDelete) activeStreams.delete(c);
 
       if (batch.lastOffset) {
-        resolveOffset(batch.lastOffset);
+        resolveOffset(typeof batch.lastOffset === 'function' ? batch.lastOffset() : batch.lastOffset);
       }
     },
   });

@@ -53,7 +53,7 @@ async function startConsumer() {
         try { ws.close(); } catch {}
       }
       if (batch.lastOffset) {
-        resolveOffset(batch.lastOffset);
+        resolveOffset(typeof batch.lastOffset === 'function' ? batch.lastOffset() : batch.lastOffset);
       }
     },
   });
