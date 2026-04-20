@@ -4,14 +4,18 @@ set -euo pipefail
 echo "=== 1GB/s Throughput Benchmark ==="
 
 # Resolve node/npm/pm2 PATH when running via sudo
-if [ -n "${SUDO_USER:-}" ]; then
-  SUDO_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-  export NVM_DIR="${SUDO_HOME}/.nvm"
+PM2_USER="${SUDO_USER:-$(whoami)}"
+PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  export NVM_DIR="${PM2_HOME_USER}/.nvm"
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-  for p in "${SUDO_HOME}/.local/bin" "${SUDO_HOME}/.nvm/versions/node/default/bin" "/usr/local/bin"; do
+  NVM_BIN="$(ls -d "${PM2_HOME_USER}/.nvm/versions/node/"*/bin 2>/dev/null | tail -1)"
+  for p in "${PM2_HOME_USER}/.local/bin" "$NVM_BIN" "/usr/local/bin"; do
     [ -d "$p" ] && export PATH="$p:$PATH"
   done
 fi
+
+PM2_RUN="sudo -u $PM2_USER PATH=\"$PATH\" PM2_HOME=\"${PM2_HOME_USER}/.pm2\" pm2"
 
 command -v node >/dev/null || { echo "ERROR: node not found. Install Node.js first."; exit 1; }
 command -v npm >/dev/null || { echo "ERROR: npm not found. Install Node.js first."; exit 1; }
@@ -333,11 +337,9 @@ sleep 5
 echo ""
 echo "--- Step 4: Start WS servers (PM2) ---"
 cd "$BASEDIR/ws-server"
-npm install --silent
-if pm2 describe ws-benchmark &>/dev/null; then
-  pm2 delete ws-benchmark 2>/dev/null || true
-fi
-pm2 start ecosystem.config.js
+sudo -u "$PM2_USER" PATH="$PATH" npm install --silent
+$PM2_RUN describe ws-benchmark &>/dev/null && $PM2_RUN delete ws-benchmark 2>/dev/null || true
+$PM2_RUN start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for WS workers..."
 sleep 5
@@ -408,7 +410,7 @@ cleanup() {
   stop_producer
   cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
   cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
-  pm2 stop ws-benchmark 2>/dev/null || true
+  $PM2_RUN stop ws-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -453,7 +455,7 @@ echo "--- Step 8: Collect system info ---"
   echo "Kernel: $(uname -a)"
   echo "Node: $(node --version)"
   echo "Docker: $(docker --version)"
-  echo "PM2: $(pm2 --version)"
+  echo "PM2: $($PM2_RUN --version 2>/dev/null || echo 'not found')"
   echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
   echo "Kafka benchmark port: 192.168.0.5:${KAFKA_PORT}"
   echo ""
@@ -461,7 +463,7 @@ echo "--- Step 8: Collect system info ---"
   "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null || true
   echo ""
   echo "=== PM2 Metrics ==="
-  pm2 show ws-benchmark 2>/dev/null || true
+  $PM2_RUN show ws-benchmark 2>/dev/null || true
   echo ""
   echo "=== Docker Stats ==="
   docker stats --no-stream grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 2>/dev/null || true
