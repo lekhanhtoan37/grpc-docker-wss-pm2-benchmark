@@ -32,6 +32,7 @@ DURATION="${DURATION:-120}"
 RUNS="${RUNS:-3}"
 TARGET_MBPS="${TARGET_MBPS:-1000}"
 NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
+CONNS="${CONNS:-20}"
 RESULTS_DIR="$BASEDIR/results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
@@ -431,7 +432,7 @@ for run in $(seq 1 "$RUNS"); do
   start_producer
 
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
-    --warmup "$WARMUP" --duration "$DURATION" \
+    --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
     2>&1 | tee "$RESULTS_DIR/1gb-run-${run}-${TIMESTAMP}.log"
   echo ""
 
@@ -483,4 +484,5 @@ echo ""
 echo "=== Benchmark complete ==="
 echo "Results: $RESULTS_DIR/"
 echo "Runs: $RUNS x ${DURATION}s measurement"
+echo "Conns/group: $CONNS"
 echo "Producer target: ${TARGET_MBPS} MB/s"

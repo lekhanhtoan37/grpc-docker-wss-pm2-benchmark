@@ -33,7 +33,7 @@ async function startConsumer() {
   console.log(`[ws:${INSTANCE}] Subscribed to ${TOPIC}`);
   await consumer.run({
     eachBatchAutoResolve: false,
-    eachBatch: async ({ batch }) => {
+    eachBatch: async ({ batch, resolveOffset }) => {
       const msgs = batch.messages;
       const len = msgs.length;
       const toDelete = [];
@@ -51,6 +51,9 @@ async function startConsumer() {
       for (const ws of toDelete) {
         clients.delete(ws);
         try { ws.close(); } catch {}
+      }
+      if (batch.lastOffset) {
+        resolveOffset(batch.lastOffset);
       }
     },
   });

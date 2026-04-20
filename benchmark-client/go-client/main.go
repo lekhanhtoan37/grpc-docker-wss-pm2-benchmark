@@ -137,11 +137,11 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 
 		conn, err := grpc.NewClient(endpoint,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithInitialWindowSize(67108864),
-			grpc.WithInitialConnWindowSize(134217728),
+			grpc.WithInitialWindowSize(671088640),
+			grpc.WithInitialConnWindowSize(1342177280),
 			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(10485760),
-				grpc.MaxCallSendMsgSize(10485760),
+				grpc.MaxCallRecvMsgSize(104857600),
+				grpc.MaxCallSendMsgSize(104857600),
 			),
 		)
 		if err != nil {
@@ -174,18 +174,19 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 
 			cs := stats[gi].conns[ci]
 			cs.rawCount.Add(1)
-			cs.rawBytes.Add(int64(proto.Size(resp)))
+			sz := int64(proto.Size(resp))
+			cs.rawBytes.Add(sz)
 
 			if !measuring.Load() {
 				continue
 			}
 
-			raw := resp.GetPayload()
+			// raw := resp.GetPayload()
 			nowMicros := time.Now().UnixMicro()
 			tsMicros := int64(resp.GetTimestamp() * 1000)
 			latencyMicros := nowMicros - tsMicros
 			if latencyMicros > 0 {
-				recordLatency(cs, latencyMicros, len(raw))
+				recordLatency(cs, latencyMicros, int(sz))
 			}
 		}
 
