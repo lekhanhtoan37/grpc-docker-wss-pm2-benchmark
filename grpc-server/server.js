@@ -20,8 +20,6 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
 const activeStreams = new Set();
-const YIELD_EVERY = 2000;
-const yieldLoop = () => new Promise((r) => setImmediate(r));
 
 const kafka = new Kafka({
   brokers: [BROKER],
@@ -47,17 +45,18 @@ async function startConsumer() {
     eachBatch: async ({ batch }) => {
       const msgs = batch.messages;
       const len = msgs.length;
+      const entries = new Array(len);
+      for (let i = 0; i < len; i++) {
+        entries[i] = {
+          timestamp: Number(msgs[i].timestamp) || 0,
+          seq: 0,
+          payload: msgs[i].value,
+        };
+      }
       const toDelete = [];
       for (const call of activeStreams) {
         try {
-          for (let i = 0; i < len; i++) {
-            call.write({
-              timestamp: Number(msgs[i].timestamp) || 0,
-              seq: 0,
-              payload: msgs[i].value,
-            });
-            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
-          }
+          call.write({ messages: entries });
         } catch {
           toDelete.push(call);
         }
