@@ -366,12 +366,10 @@ echo "--- Step 6: Install deps + build Go client ---"
 npm install --silent --prefix "$BASEDIR/benchmark-client"
 npm install --silent --prefix "$BASEDIR/producer"
 npm rebuild --silent --prefix "$BASEDIR/producer"
-if command -v go >/dev/null 2>&1; then
-  echo "Building Go benchmark client..."
-  (cd "$BASEDIR/benchmark-client/go-client" && go build -o benchmark-client .)
-else
-  echo "WARNING: go not found, using pre-built binary"
-fi
+command -v go >/dev/null || { echo "ERROR: go not found. Install Go first."; exit 1; }
+echo "Building Go benchmark client..."
+(cd "$BASEDIR/benchmark-client/go-client" && go build -o benchmark-client .)
+echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
 
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness
