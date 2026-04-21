@@ -189,26 +189,33 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			}
 
 			cs := stats[gi].conns[ci]
-			cs.rawCount.Add(1)
-			sz := int64(proto.Size(resp))
-			cs.rawBytes.Add(sz)
+			entries := resp.GetMessages()
+			batchSz := int64(proto.Size(resp))
+			batchLen := int64(len(entries))
+			cs.rawCount.Add(batchLen)
+			cs.rawBytes.Add(batchSz)
 
-			if !cs.firstMsg.Load() {
+			if !cs.firstMsg.Load() && batchLen > 0 {
 				cs.firstMsg.Store(true)
-				log.Printf("[client] %s conn#%d FIRST MSG (size=%d, ts=%.3f, seq=%d)", groups[gi].Name, ci+1, sz, resp.GetTimestamp(), resp.GetSeq())
+				e := entries[0]
+				log.Printf("[client] %s conn#%d FIRST BATCH (%d msgs, size=%d, ts=%d)", groups[gi].Name, ci+1, batchLen, batchSz, e.GetTimestamp())
 			}
 
 			if !measuring.Load() {
 				continue
 			}
 
-			ts := resp.GetTimestamp()
-			nowMicros := time.Now().UnixMicro()
-			tsMicros := int64(ts * 1000)
-			latencyMicros := nowMicros - tsMicros
-			recordLatency(cs, latencyMicros, int(sz))
-			if latencyMicros > 0 {
-				cs.hist.RecordValue(latencyMicros)
+			cs.count.Add(batchLen)
+			cs.bytes.Add(batchSz)
+			if batchLen > 0 {
+				e := entries[batchLen-1]
+				ts := e.GetTimestamp()
+				nowMicros := time.Now().UnixMicro()
+				tsMicros := int64(ts * 1000)
+				latencyMicros := nowMicros - tsMicros
+				if latencyMicros > 0 {
+					cs.hist.RecordValue(latencyMicros)
+				}
 			}
 		}
 

@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: proto/benchmark.proto
+// source: benchmark.proto
 
 package proto
 
@@ -30,7 +30,7 @@ type StreamRequest struct {
 
 func (x *StreamRequest) Reset() {
 	*x = StreamRequest{}
-	mi := &file_proto_benchmark_proto_msgTypes[0]
+	mi := &file_benchmark_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -42,7 +42,7 @@ func (x *StreamRequest) String() string {
 func (*StreamRequest) ProtoMessage() {}
 
 func (x *StreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_benchmark_proto_msgTypes[0]
+	mi := &file_benchmark_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -55,7 +55,7 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
 func (*StreamRequest) Descriptor() ([]byte, []int) {
-	return file_proto_benchmark_proto_rawDescGZIP(), []int{0}
+	return file_benchmark_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *StreamRequest) GetClientId() string {
@@ -65,7 +65,7 @@ func (x *StreamRequest) GetClientId() string {
 	return ""
 }
 
-type StreamResponse struct {
+type MessageEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -74,9 +74,67 @@ type StreamResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *MessageEntry) Reset() {
+	*x = MessageEntry{}
+	mi := &file_benchmark_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MessageEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MessageEntry) ProtoMessage() {}
+
+func (x *MessageEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_benchmark_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MessageEntry.ProtoReflect.Descriptor instead.
+func (*MessageEntry) Descriptor() ([]byte, []int) {
+	return file_benchmark_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MessageEntry) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *MessageEntry) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *MessageEntry) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type StreamResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Messages      []*MessageEntry        `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
 func (x *StreamResponse) Reset() {
 	*x = StreamResponse{}
-	mi := &file_proto_benchmark_proto_msgTypes[1]
+	mi := &file_benchmark_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -88,7 +146,7 @@ func (x *StreamResponse) String() string {
 func (*StreamResponse) ProtoMessage() {}
 
 func (x *StreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_benchmark_proto_msgTypes[1]
+	mi := &file_benchmark_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -101,91 +159,81 @@ func (x *StreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamResponse.ProtoReflect.Descriptor instead.
 func (*StreamResponse) Descriptor() ([]byte, []int) {
-	return file_proto_benchmark_proto_rawDescGZIP(), []int{1}
+	return file_benchmark_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *StreamResponse) GetTimestamp() uint64 {
+func (x *StreamResponse) GetMessages() []*MessageEntry {
 	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
-func (x *StreamResponse) GetSeq() uint64 {
-	if x != nil {
-		return x.Seq
-	}
-	return 0
-}
-
-func (x *StreamResponse) GetPayload() []byte {
-	if x != nil {
-		return x.Payload
+		return x.Messages
 	}
 	return nil
 }
 
-var File_proto_benchmark_proto protoreflect.FileDescriptor
+var File_benchmark_proto protoreflect.FileDescriptor
 
-const file_proto_benchmark_proto_rawDesc = "" +
+const file_benchmark_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/benchmark.proto\x12\tbenchmark\",\n" +
+	"\x0fbenchmark.proto\x12\tbenchmark\",\n" +
 	"\rStreamRequest\x12\x1b\n" +
-	"\tclient_id\x18\x01 \x01(\tR\bclientId\"Z\n" +
-	"\x0eStreamResponse\x12\x1c\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\"X\n" +
+	"\fMessageEntry\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x10\n" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\fR\apayload2[\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\"E\n" +
+	"\x0eStreamResponse\x123\n" +
+	"\bmessages\x18\x01 \x03(\v2\x17.benchmark.MessageEntryR\bmessages2[\n" +
 	"\x10BenchmarkService\x12G\n" +
 	"\x0eStreamMessages\x12\x18.benchmark.StreamRequest\x1a\x19.benchmark.StreamResponse0\x01B#Z!github.com/benchmark-client/protob\x06proto3"
 
 var (
-	file_proto_benchmark_proto_rawDescOnce sync.Once
-	file_proto_benchmark_proto_rawDescData []byte
+	file_benchmark_proto_rawDescOnce sync.Once
+	file_benchmark_proto_rawDescData []byte
 )
 
-func file_proto_benchmark_proto_rawDescGZIP() []byte {
-	file_proto_benchmark_proto_rawDescOnce.Do(func() {
-		file_proto_benchmark_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_benchmark_proto_rawDesc), len(file_proto_benchmark_proto_rawDesc)))
+func file_benchmark_proto_rawDescGZIP() []byte {
+	file_benchmark_proto_rawDescOnce.Do(func() {
+		file_benchmark_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_benchmark_proto_rawDesc), len(file_benchmark_proto_rawDesc)))
 	})
-	return file_proto_benchmark_proto_rawDescData
+	return file_benchmark_proto_rawDescData
 }
 
-var file_proto_benchmark_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_proto_benchmark_proto_goTypes = []any{
+var file_benchmark_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_benchmark_proto_goTypes = []any{
 	(*StreamRequest)(nil),  // 0: benchmark.StreamRequest
-	(*StreamResponse)(nil), // 1: benchmark.StreamResponse
+	(*MessageEntry)(nil),   // 1: benchmark.MessageEntry
+	(*StreamResponse)(nil), // 2: benchmark.StreamResponse
 }
-var file_proto_benchmark_proto_depIdxs = []int32{
-	0, // 0: benchmark.BenchmarkService.StreamMessages:input_type -> benchmark.StreamRequest
-	1, // 1: benchmark.BenchmarkService.StreamMessages:output_type -> benchmark.StreamResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+var file_benchmark_proto_depIdxs = []int32{
+	1, // 0: benchmark.StreamResponse.messages:type_name -> benchmark.MessageEntry
+	0, // 1: benchmark.BenchmarkService.StreamMessages:input_type -> benchmark.StreamRequest
+	2, // 2: benchmark.BenchmarkService.StreamMessages:output_type -> benchmark.StreamResponse
+	2, // [2:3] is the sub-list for method output_type
+	1, // [1:2] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_proto_benchmark_proto_init() }
-func file_proto_benchmark_proto_init() {
-	if File_proto_benchmark_proto != nil {
+func init() { file_benchmark_proto_init() }
+func file_benchmark_proto_init() {
+	if File_benchmark_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_benchmark_proto_rawDesc), len(file_proto_benchmark_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_benchmark_proto_rawDesc), len(file_benchmark_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_benchmark_proto_goTypes,
-		DependencyIndexes: file_proto_benchmark_proto_depIdxs,
-		MessageInfos:      file_proto_benchmark_proto_msgTypes,
+		GoTypes:           file_benchmark_proto_goTypes,
+		DependencyIndexes: file_benchmark_proto_depIdxs,
+		MessageInfos:      file_benchmark_proto_msgTypes,
 	}.Build()
-	File_proto_benchmark_proto = out.File
-	file_proto_benchmark_proto_goTypes = nil
-	file_proto_benchmark_proto_depIdxs = nil
+	File_benchmark_proto = out.File
+	file_benchmark_proto_goTypes = nil
+	file_benchmark_proto_depIdxs = nil
 }
