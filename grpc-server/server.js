@@ -9,6 +9,8 @@ const CONTAINER_ID = process.env.CONTAINER_ID || "default";
 const GROUP_ID = `grpc-benchmark-${CONTAINER_ID}`;
 const PORT = parseInt(process.env.GRPC_PORT || "50051", 10);
 const HOST = process.env.GRPC_HOST || "0.0.0.0";
+const LINGER_MS = parseInt(process.env.LINGER_MS || "2", 10);
+const BATCH_MAX = parseInt(process.env.BATCH_MAX || "500", 10);
 
 const packageDef = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -24,6 +26,7 @@ const activeCalls = new Set();
 let batchCount = 0;
 let totalMsgsIn = 0;
 let totalMsgsOut = 0;
+let totalFlushes = 0;
 let drainWaits = 0;
 const startTime = Date.now();
 
@@ -32,7 +35,9 @@ setInterval(() => {
   if (elapsed > 0) {
     console.log(
       `[grpc:${CONTAINER_ID}] batches=${batchCount} in=${totalMsgsIn} out=${totalMsgsOut} ` +
-      `drains=${drainWaits} in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeCalls.size}`,
+      `flushes=${totalFlushes} drains=${drainWaits} ` +
+      `in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} ` +
+      `streams=${activeCalls.size} buffer=${lingerBuffer.length}`,
     );
   }
 }, 5000);
@@ -59,11 +64,64 @@ function parsePayload(buf) {
   }
 }
 
+let lingerBuffer = [];
+let lingerTimer = null;
+let flushing = false;
+
+async function flushToStreams() {
+  if (flushing || lingerBuffer.length === 0) return;
+  flushing = true;
+
+  const entries = lingerBuffer;
+  lingerBuffer = [];
+  if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+
+  const len = entries.length;
+  totalFlushes++;
+  totalMsgsOut += len;
+
+  const grpcBatch = { messages: entries };
+
+  const dead = [];
+  for (const call of activeCalls) {
+    try {
+      const ok = call.write(grpcBatch);
+      if (!ok) {
+        drainWaits++;
+        await new Promise((r) => { call.once("drain", r); });
+      }
+    } catch {
+      dead.push(call);
+    }
+  }
+
+  for (const c of dead) activeCalls.delete(c);
+  flushing = false;
+}
+
+function appendToBuffer(entries) {
+  for (const e of entries) {
+    lingerBuffer.push(e);
+  }
+
+  if (lingerBuffer.length >= BATCH_MAX) {
+    flushToStreams();
+    return;
+  }
+
+  if (!lingerTimer && !flushing) {
+    lingerTimer = setTimeout(() => {
+      lingerTimer = null;
+      flushToStreams();
+    }, LINGER_MS);
+  }
+}
+
 async function startConsumer() {
   await consumer.connect();
   console.log(`[grpc:${CONTAINER_ID}] Kafka consumer connected (group: ${GROUP_ID})`);
   await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
-  console.log(`[grpc:${CONTAINER_ID}] Subscribed to ${TOPIC}`);
+  console.log(`[grpc:${CONTAINER_ID}] Subscribed to ${TOPIC} (linger=${LINGER_MS}ms, batchMax=${BATCH_MAX})`);
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset }) => {
@@ -82,25 +140,7 @@ async function startConsumer() {
         };
       }
 
-      const grpcBatch = { messages: entries };
-
-      const dead = [];
-      for (const call of activeCalls) {
-        try {
-          const ok = call.write(grpcBatch);
-          if (!ok) {
-            drainWaits++;
-            await new Promise((r) => {
-              call.once("drain", r);
-            });
-          }
-          totalMsgsOut += len;
-        } catch {
-          dead.push(call);
-        }
-      }
-
-      for (const c of dead) activeCalls.delete(c);
+      appendToBuffer(entries);
 
       if (batch.lastOffset) {
         resolveOffset(typeof batch.lastOffset === 'function' ? batch.lastOffset() : batch.lastOffset);
@@ -158,6 +198,8 @@ async function run() {
 
 const shutdown = async () => {
   console.log(`[grpc:${CONTAINER_ID}] Shutting down`);
+  if (lingerTimer) clearTimeout(lingerTimer);
+  await flushToStreams();
   for (const call of activeCalls) {
     try { call.end(); } catch {}
   }
