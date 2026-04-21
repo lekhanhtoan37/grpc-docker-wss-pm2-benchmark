@@ -19,11 +19,12 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 });
 const benchmarkProto = grpc.loadPackageDefinition(packageDef).benchmark;
 
-const activeCalls = new Set();
+const activeStreams = new Map();
 
 let batchCount = 0;
 let totalMsgsIn = 0;
 let totalMsgsOut = 0;
+let drainWaits = 0;
 const startTime = Date.now();
 
 setInterval(() => {
@@ -31,7 +32,7 @@ setInterval(() => {
   if (elapsed > 0) {
     console.log(
       `[grpc:${CONTAINER_ID}] batches=${batchCount} in=${totalMsgsIn} out=${totalMsgsOut} ` +
-      `in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeCalls.size}`,
+      `drains=${drainWaits} in/s=${(totalMsgsIn / elapsed).toFixed(0)} out/s=${(totalMsgsOut / elapsed).toFixed(0)} streams=${activeStreams.size}`,
     );
   }
 }, 5000);
@@ -58,6 +59,46 @@ function parsePayload(buf) {
   }
 }
 
+function createStreamWriter(call) {
+  let dead = false;
+  let drainResolve = null;
+
+  const resolveDrain = () => {
+    if (drainResolve) {
+      const r = drainResolve;
+      drainResolve = null;
+      r();
+    }
+  };
+
+  call.on("cancelled", () => { dead = true; resolveDrain(); });
+  call.on("error", () => { dead = true; resolveDrain(); });
+
+  return {
+    get dead() { return dead; },
+    async writeBatch(msgs) {
+      if (dead) return;
+      for (let i = 0; i < msgs.length; i++) {
+        if (dead) return;
+        try {
+          const ok = call.write(msgs[i]);
+          if (!ok && !dead) {
+            drainWaits++;
+            await new Promise((r) => {
+              drainResolve = r;
+              call.once("drain", resolveDrain);
+            });
+          }
+          totalMsgsOut++;
+        } catch {
+          dead = true;
+          return;
+        }
+      }
+    },
+  };
+}
+
 async function startConsumer() {
   await consumer.connect();
   console.log(`[grpc:${CONTAINER_ID}] Kafka consumer connected (group: ${GROUP_ID})`);
@@ -71,24 +112,28 @@ async function startConsumer() {
       batchCount++;
       totalMsgsIn += len;
 
-      const dead = [];
-      for (const call of activeCalls) {
-        try {
-          for (let i = 0; i < len; i++) {
-            const parsed = parsePayload(msgs[i].value);
-            call.write({
-              timestamp: parsed ? parsed.timestamp : Number(msgs[i].timestamp) || 0,
-              seq: parsed ? parsed.seq || 0 : 0,
-              payload: msgs[i].value,
-            });
-          }
-          totalMsgsOut += len;
-        } catch {
-          dead.push(call);
-        }
+      const grpcMsgs = new Array(len);
+      for (let i = 0; i < len; i++) {
+        const parsed = parsePayload(msgs[i].value);
+        grpcMsgs[i] = {
+          timestamp: parsed ? parsed.timestamp : Number(msgs[i].timestamp) || 0,
+          seq: parsed ? parsed.seq || 0 : 0,
+          payload: msgs[i].value,
+        };
       }
 
-      for (const c of dead) activeCalls.delete(c);
+      const dead = [];
+      const promises = [];
+      for (const [call, writer] of activeStreams) {
+        if (writer.dead) { dead.push(call); continue; }
+        promises.push(writer.writeBatch(grpcMsgs));
+      }
+      await Promise.all(promises);
+
+      for (const c of dead) activeStreams.delete(c);
+      for (const [call, writer] of activeStreams) {
+        if (writer.dead) activeStreams.delete(call);
+      }
 
       if (batch.lastOffset) {
         resolveOffset(typeof batch.lastOffset === 'function' ? batch.lastOffset() : batch.lastOffset);
@@ -98,14 +143,15 @@ async function startConsumer() {
 }
 
 function streamMessages(call) {
-  activeCalls.add(call);
-  console.log(`[grpc:${CONTAINER_ID}] Stream connected (total: ${activeCalls.size})`);
+  const writer = createStreamWriter(call);
+  activeStreams.set(call, writer);
+  console.log(`[grpc:${CONTAINER_ID}] Stream connected (total: ${activeStreams.size})`);
   call.on("cancelled", () => {
-    activeCalls.delete(call);
-    console.log(`[grpc:${CONTAINER_ID}] Stream cancelled (total: ${activeCalls.size})`);
+    activeStreams.delete(call);
+    console.log(`[grpc:${CONTAINER_ID}] Stream cancelled (total: ${activeStreams.size})`);
   });
   call.on("error", () => {
-    activeCalls.delete(call);
+    activeStreams.delete(call);
   });
 }
 
@@ -146,7 +192,7 @@ async function run() {
 
 const shutdown = async () => {
   console.log(`[grpc:${CONTAINER_ID}] Shutting down`);
-  for (const call of activeCalls) {
+  for (const [call] of activeStreams) {
     try { call.end(); } catch {}
   }
   await consumer.disconnect().catch(() => {});
