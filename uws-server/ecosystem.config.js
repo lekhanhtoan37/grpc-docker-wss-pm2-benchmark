@@ -5,7 +5,7 @@ module.exports = {
       script: "./server.js",
       instances: 3,
       exec_mode: "cluster",
-      max_memory_restart: "16G",
+      interpreter: process.env.NODE_20_PATH || "node",
       node_args: "--max-old-space-size=16384",
       env: {
         PORT: 8091,

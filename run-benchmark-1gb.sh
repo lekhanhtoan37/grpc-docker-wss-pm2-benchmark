@@ -374,10 +374,15 @@ sleep 5
 
 echo ""
 echo "--- Step 4d: Start uWS servers (PM2) ---"
+NVM_DIR="${PM2_HOME_USER}/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+NODE_20_BIN="$(nvm which 20 2>/dev/null || which node 2>/dev/null)"
+echo "uWS Node interpreter: $NODE_20_BIN ($(node --version))"
 cd "$BASEDIR/uws-server"
-run_as_user npm install --silent
-run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
-run_pm2 start ecosystem.config.js
+PATH="$(dirname "$NODE_20_BIN"):$PATH" run_as_user npm install --silent
+cd "$BASEDIR/uws-server"
+NODE_20_PATH="$NODE_20_BIN" run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
+NODE_20_PATH="$NODE_20_BIN" run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for uWS workers..."
 sleep 5
