@@ -1,0 +1,15 @@
+{
+  "name": "benchmark-uws-server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop ecosystem.config.js",
+    "delete": "pm2 delete ecosystem.config.js",
+    "logs": "pm2 logs uws-benchmark"
+  },
+  "dependencies": {
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.61.0",
+    "kafkajs": "^2.2.4"
+  }
+}

@@ -340,6 +340,24 @@ cd "$BASEDIR"
 echo "Waiting 5s for gRPC host containers..."
 sleep 5
 
+echo ""
+echo "--- Step 4b: Build + start uWS servers (Docker) ---"
+cd "$BASEDIR/uws-server"
+docker compose down 2>/dev/null || true
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
+docker compose build --no-cache
+docker compose -f docker-compose.host.yml build --no-cache
+docker compose up -d
+cd "$BASEDIR"
+echo "Waiting 10s for uWS bridge containers..."
+sleep 10
+
+cd "$BASEDIR/uws-server"
+docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "Waiting 5s for uWS host containers..."
+sleep 5
+
 # ──────────────────────────────────────────────
 # Step 4: Start WS servers (PM2)
 # ──────────────────────────────────────────────
@@ -351,6 +369,16 @@ run_pm2 describe ws-benchmark &>/dev/null && run_pm2 delete ws-benchmark 2>/dev/
 run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for WS workers..."
+sleep 5
+
+echo ""
+echo "--- Step 4d: Start uWS servers (PM2) ---"
+cd "$BASEDIR/uws-server"
+run_as_user npm install --silent
+run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for uWS workers..."
 sleep 5
 
 # ──────────────────────────────────────────────
@@ -378,7 +406,8 @@ echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client"
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Container Kafka consumer status ---"
-for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3; do
+  for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 \
+           uws-server-1 uws-server-2 uws-server-3 uws-host-1 uws-host-2 uws-host-3; do
   CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -cE "Kafka consumer (connected|ready)" || true)
   echo "  $c: consumer_ready=$CONSUMER_READY"
   if [ "$CONSUMER_READY" -eq 0 ]; then
@@ -463,7 +492,10 @@ cleanup() {
   stop_producer
   cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
   cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+  cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
+  cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   run_pm2 stop ws-benchmark 2>/dev/null || true
+  run_pm2 stop uws-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -477,12 +509,15 @@ for run in $(seq 1 "$RUNS"); do
   start_producer
 
   echo "--- Server diagnostics (after producers started) ---"
-  for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3; do
+for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 \
+         uws-server-1 uws-server-2 uws-server-3 uws-host-1 uws-host-2 uws-host-3; do
     echo "  === $c (last 10 lines) ==="
     docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
   done
   echo "  === WS server (pm2 logs, last 10 lines) ==="
   run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+  echo "  === uWS server (pm2 logs, last 10 lines) ==="
+  run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
   echo "--- End server diagnostics ---"
 
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
@@ -497,7 +532,14 @@ for run in $(seq 1 "$RUNS"); do
     cd "$BASEDIR/grpc-server"
     docker compose down 2>/dev/null || true
     docker compose -f docker-compose.host.yml down 2>/dev/null || true
+    cd "$BASEDIR/uws-server"
+    docker compose down 2>/dev/null || true
+    docker compose -f docker-compose.host.yml down 2>/dev/null || true
     sleep 2
+    cd "$BASEDIR/grpc-server"
+    docker compose up -d
+    docker compose -f docker-compose.host.yml up -d
+    cd "$BASEDIR/uws-server"
     docker compose up -d
     docker compose -f docker-compose.host.yml up -d
     cd "$BASEDIR"
@@ -524,11 +566,19 @@ echo "--- Step 8: Collect system info ---"
   echo "=== Topic Info ==="
   "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.5:${KAFKA_PORT}" 2>/dev/null || true
   echo ""
-  echo "=== PM2 Metrics ==="
+  echo "=== PM2 Metrics (WS) ==="
   run_pm2 show ws-benchmark 2>/dev/null || true
   echo ""
+  echo "=== PM2 Metrics (uWS) ==="
+  run_pm2 show uws-benchmark 2>/dev/null || true
+  echo ""
   echo "=== Docker Stats ==="
-  docker stats --no-stream grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-host-3 2>/dev/null || true
+  docker stats --no-stream \
+    grpc-server-1 grpc-server-2 grpc-server-3 \
+    grpc-host-1 grpc-host-2 grpc-host-3 \
+    uws-server-1 uws-server-2 uws-server-3 \
+    uws-host-1 uws-host-2 uws-host-3 \
+    2>/dev/null || true
   echo ""
   echo "=== Disk Info ==="
   df -h "${KAFKA_DATA}" 2>/dev/null || df -h .

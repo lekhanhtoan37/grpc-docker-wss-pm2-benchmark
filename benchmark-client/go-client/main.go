@@ -46,6 +46,9 @@ type GroupStats struct {
 
 var groups = []Group{
 	{Name: "WS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8090", "ws://127.0.0.1:8090", "ws://127.0.0.1:8090"}},
+	{Name: "uWS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8091", "ws://127.0.0.1:8091", "ws://127.0.0.1:8091"}},
+	{Name: "uWS bridge", Type: "ws", Endpoints: []string{"ws://127.0.0.1:50061", "ws://127.0.0.1:50062", "ws://127.0.0.1:50063"}},
+	{Name: "uWS host", Type: "ws", Endpoints: []string{"ws://127.0.0.1:60061", "ws://127.0.0.1:60062", "ws://127.0.0.1:60063"}},
 	{Name: "gRPC bridge", Type: "grpc", Endpoints: []string{"localhost:50051", "localhost:50052", "localhost:50053"}},
 	{Name: "gRPC host", Type: "grpc", Endpoints: []string{"localhost:60051", "localhost:60052", "localhost:60053"}},
 }
@@ -402,27 +405,41 @@ func main() {
 	percentiles := []string{"p50", "p75", "p90", "p95", "p99", "p99.9"}
 	pctValues := []float64{50, 75, 90, 95, 99, 99.9}
 
-	fmt.Printf("╔══════════╦════════════╦══════════════╦══════════════╦════════════╦════════════╗\n")
-	fmt.Printf("║ Pctl     ║%s║%s║%s║%s║%s║\n",
-		pad("WS (host/PM2)", 12), pad("gRPC bridge", 14), pad("gRPC host", 14), pad("bridge-WS Δ", 12), pad("host-WS Δ", 12))
-	fmt.Printf("╠══════════╬════════════╬══════════════╬══════════════╬════════════╬════════════╣\n")
+	fmt.Printf("%-10s", "Pctl")
+	for gi := range groups {
+		fmt.Printf(" %14s", groups[gi].Name)
+	}
+	fmt.Println()
+	fmt.Print(strings.Repeat("-", 10))
+	for range groups {
+		fmt.Print(strings.Repeat("-", 15))
+	}
+	fmt.Println()
 
 	for i := range percentiles {
-		vals := make([]float64, len(groups))
+		fmt.Printf("%-10s", percentiles[i])
 		for gi := range groups {
-			vals[gi] = float64(groupMerged[gi].ValueAtPercentile(pctValues[i])) / 1000.0
+			val := float64(groupMerged[gi].ValueAtPercentile(pctValues[i])) / 1000.0
+			fmt.Printf(" %14.3f", val)
 		}
-		d1 := vals[1] - vals[0]
-		d2 := vals[2] - vals[0]
-		fmt.Printf("║ %s ║%s║%s║%s║%s║%s║\n",
-			pad(percentiles[i], 8),
-			pad(fmt.Sprintf("%.3f", vals[0]), 12),
-			pad(fmt.Sprintf("%.3f", vals[1]), 14),
-			pad(fmt.Sprintf("%.3f", vals[2]), 14),
-			pad(fmt.Sprintf("%+.3f", d1), 12),
-			pad(fmt.Sprintf("%+.3f", d2), 12))
+		fmt.Println()
 	}
-	fmt.Printf("╚══════════╩════════════╩══════════════╩══════════════╩════════════╩════════════╝\n")
+
+	fmt.Println("\nDelta vs WS (host/PM2):")
+	fmt.Printf("%-10s", "Pctl")
+	for gi := 1; gi < len(groups); gi++ {
+		fmt.Printf(" %14s", groups[gi].Name)
+	}
+	fmt.Println()
+	for i := range percentiles {
+		fmt.Printf("%-10s", percentiles[i])
+		wsVal := float64(groupMerged[0].ValueAtPercentile(pctValues[i])) / 1000.0
+		for gi := 1; gi < len(groups); gi++ {
+			val := float64(groupMerged[gi].ValueAtPercentile(pctValues[i])) / 1000.0
+			fmt.Printf(" %+14.3f", val-wsVal)
+		}
+		fmt.Println()
+	}
 
 	fmt.Println("\nPer-connection breakdown:")
 	for gi := range groups {

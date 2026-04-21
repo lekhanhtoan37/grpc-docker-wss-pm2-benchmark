@@ -1,0 +1,30 @@
+services:
+  uws-host-1:
+    build: .
+    container_name: uws-host-1
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-1"
+      PORT: "60061"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+
+  uws-host-2:
+    build: .
+    container_name: uws-host-2
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-2"
+      PORT: "60062"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+
+  uws-host-3:
+    build: .
+    container_name: uws-host-3
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-3"
+      PORT: "60063"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"

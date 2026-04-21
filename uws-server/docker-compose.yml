@@ -1,0 +1,33 @@
+services:
+  uws-server-1:
+    build: .
+    container_name: uws-server-1
+    environment:
+      CONTAINER_ID: "1"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      PORT: "8091"
+    ports:
+      - "50061:8091"
+
+  uws-server-2:
+    build: .
+    container_name: uws-server-2
+    environment:
+      CONTAINER_ID: "2"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      PORT: "8091"
+    ports:
+      - "50062:8091"
+
+  uws-server-3:
+    build: .
+    container_name: uws-server-3
+    environment:
+      CONTAINER_ID: "3"
+      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      PORT: "8091"
+    ports:
+      - "50063:8091"
