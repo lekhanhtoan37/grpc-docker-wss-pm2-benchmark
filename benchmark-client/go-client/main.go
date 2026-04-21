@@ -21,8 +21,6 @@ import (
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
-
 	pb "benchmark-client/proto"
 )
 
@@ -66,11 +64,6 @@ func newGroupStats(conns int) *GroupStats {
 		gs.conns[i] = newConnStats()
 	}
 	return gs
-}
-
-func recordLatency(cs *ConnStats, latencyMicros int64, payloadLen int) {
-	cs.count.Add(1)
-	cs.bytes.Add(int64(payloadLen))
 }
 
 func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
@@ -117,19 +110,22 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				Timestamp float64 `json:"timestamp"`
 			}
 			if err := json.Unmarshal(message, &msg); err != nil {
-				log.Printf("[client] %s conn#%d JSON parse error: %v (msg len=%d)", groups[gi].Name, ci+1, err, len(message))
 				continue
 			}
 
 			nowMicros := time.Now().UnixMicro()
 			tsMicros := int64(msg.Timestamp * 1000)
 			latencyMicros := nowMicros - tsMicros
+			if latencyMicros < 1 {
+				latencyMicros = 1
+			}
 			cs := stats[gi].conns[ci]
 			cs.count.Add(1)
-			cs.bytes.Add(int64(len(message)))
-			if latencyMicros > 0 {
-				cs.hist.RecordValue(latencyMicros)
-			}
+			cs.rawCount.Add(1)
+			msgBytes := int64(len(message))
+			cs.bytes.Add(msgBytes)
+			cs.rawBytes.Add(msgBytes)
+			cs.hist.RecordValue(latencyMicros)
 		}
 
 		conn.Close()
@@ -190,32 +186,37 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 
 			cs := stats[gi].conns[ci]
 			entries := resp.GetMessages()
-			batchSz := int64(proto.Size(resp))
 			batchLen := int64(len(entries))
-			cs.rawCount.Add(batchLen)
-			cs.rawBytes.Add(batchSz)
 
 			if !cs.firstMsg.Load() && batchLen > 0 {
 				cs.firstMsg.Store(true)
 				e := entries[0]
-				log.Printf("[client] %s conn#%d FIRST BATCH (%d msgs, size=%d, ts=%d)", groups[gi].Name, ci+1, batchLen, batchSz, e.GetTimestamp())
+				log.Printf("[client] %s conn#%d FIRST BATCH (%d msgs, ts=%d)", groups[gi].Name, ci+1, batchLen, e.GetTimestamp())
 			}
 
 			if !measuring.Load() {
 				continue
 			}
 
+			var payloadBytes int64
+			for _, e := range entries {
+				payloadBytes += int64(len(e.GetPayload()))
+			}
+
+			cs.rawCount.Add(batchLen)
+			cs.rawBytes.Add(payloadBytes)
 			cs.count.Add(batchLen)
-			cs.bytes.Add(batchSz)
-			if batchLen > 0 {
-				e := entries[batchLen-1]
+			cs.bytes.Add(payloadBytes)
+
+			nowMicros := time.Now().UnixMicro()
+			for _, e := range entries {
 				ts := e.GetTimestamp()
-				nowMicros := time.Now().UnixMicro()
 				tsMicros := int64(ts * 1000)
 				latencyMicros := nowMicros - tsMicros
-				if latencyMicros > 0 {
-					cs.hist.RecordValue(latencyMicros)
+				if latencyMicros < 1 {
+					latencyMicros = 1
 				}
+				cs.hist.RecordValue(latencyMicros)
 			}
 		}
 
@@ -365,13 +366,10 @@ func main() {
 		fmt.Printf("%-16s %8d %12d %10.2f %12.0f\n", groups[gi].Name, *conns, totalMsgs, mbps, msgPerSec)
 	}
 
-	fmt.Println("\n=== RAW RECV STATS (gRPC only) ===\n")
+	fmt.Println("\n=== RAW RECV STATS ===\n")
 	fmt.Printf("%-16s %10s %10s %12s %10s\n", "Group", "Raw Msgs", "Raw MB/s", "Raw msg/s", "Drop %")
 	fmt.Println(strings.Repeat("-", 60))
 	for gi := range groups {
-		if groups[gi].Type != "grpc" {
-			continue
-		}
 		totalMsgs, _, totalRaw, totalRawBytes := aggregateGroup(stats[gi])
 		rawMbs := float64(totalRawBytes) / 1024 / 1024 / measureDuration
 		rawMsgSec := float64(totalRaw) / measureDuration
