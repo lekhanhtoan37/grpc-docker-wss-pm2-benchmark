@@ -343,6 +343,7 @@ sleep 5
 echo ""
 echo "--- Step 4b: Build + start uWS servers (Docker) ---"
 cd "$BASEDIR/uws-server"
+run_as_user npm install --silent
 docker compose down 2>/dev/null || true
 docker compose -f docker-compose.host.yml down 2>/dev/null || true
 docker compose build --no-cache
