@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/main/.schema/devbox.schema.json",
   "packages": [
-    "nodejs_20",
-    "go_1_23"
+    "nodejs_22",
+    "go_1_25"
   ],
   "shell": {
     "init_scripts": [
