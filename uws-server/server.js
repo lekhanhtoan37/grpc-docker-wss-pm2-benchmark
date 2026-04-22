@@ -6,8 +6,11 @@ const BROKER = process.env.KAFKA_BROKER || "192.168.0.9:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.env.CONTAINER_ID || process.pid;
 const GROUP_ID = `uws-benchmark-worker-${INSTANCE}`;
+const MAX_BACKPRESSURE = 128 * 1024 * 1024;
+const WARN_THRESHOLD = 0.8;
 
 const clients = new Set();
+let connCounter = 0;
 const YIELD_EVERY = 2000;
 const yieldLoop = () => new Promise((r) => setImmediate(r));
 
@@ -42,12 +45,25 @@ async function startConsumer() {
             JSON.parse(msgs[i].value.toString());
             const ok = ws.send(msgs[i].value.toString(), false);
             if (!ok) {
+              const buffered = ws.getBufferedAmount();
+              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send failed (backpressure full), buffered=${(buffered / 1024 / 1024).toFixed(2)}MB, closing`);
               toDelete.push(ws);
               break;
             }
-            if (i > 0 && i % YIELD_EVERY === 0) await yieldLoop();
+            if (i > 0 && i % YIELD_EVERY === 0) {
+              const buffered = ws.getBufferedAmount();
+              if (buffered > MAX_BACKPRESSURE * WARN_THRESHOLD && !ws._warned80) {
+                console.warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure >=80%: ${(buffered / 1024 / 1024).toFixed(2)}MB / ${(MAX_BACKPRESSURE / 1024 / 1024).toFixed(0)}MB`);
+                ws._warned80 = true;
+              }
+              if (buffered < MAX_BACKPRESSURE * WARN_THRESHOLD) {
+                ws._warned80 = false;
+              }
+              await yieldLoop();
+            }
           }
-        } catch {
+        } catch (e) {
+          console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send error: ${e.message}`);
           toDelete.push(ws);
         }
       }
@@ -80,11 +96,11 @@ const app = uWS
     compression: 0,
     maxPayloadLength: 16 * 1024 * 1024,
     idleTimeout: 120,
-    maxBackpressure: 128 * 1024 * 1024,
+    maxBackpressure: MAX_BACKPRESSURE,
     closeOnBackpressureLimit: false,
     upgrade: (res, req, context) => {
       res.upgrade(
-        {},
+        { _connId: ++connCounter, _warned80: false },
         req.getHeader("sec-websocket-key"),
         req.getHeader("sec-websocket-protocol"),
         req.getHeader("sec-websocket-extensions"),
@@ -93,11 +109,12 @@ const app = uWS
     },
     open: (ws) => {
       clients.add(ws);
-      console.log(`[uws:${INSTANCE}] Client connected (total: ${clients.size})`);
+      console.log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
     },
     close: (ws) => {
+      const buffered = ws.getBufferedAmount();
       clients.delete(ws);
-      console.log(`[uws:${INSTANCE}] Client disconnected (total: ${clients.size})`);
+      console.log(`[uws:${INSTANCE}] conn#${ws._connId} disconnected, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
     },
     message: () => {},
   })
