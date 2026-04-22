@@ -390,12 +390,12 @@ bash "$BASEDIR/health-check-1gb.sh"
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Step 6: Install deps + build Go client ---"
-PATH="$RESOLVED_PATH" npm install --silent --prefix "$BASEDIR/benchmark-client"
-PATH="$RESOLVED_PATH" npm install --silent --prefix "$BASEDIR/producer"
-PATH="$RESOLVED_PATH" npm rebuild --silent --prefix "$BASEDIR/producer"
-command -v go >/dev/null || { echo "ERROR: go not found. Install Go first."; exit 1; }
+PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/benchmark-client"
+PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" npm rebuild --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found in PATH=$RESOLVED_PATH"; exit 1; }
 echo "Building Go benchmark client..."
-(cd "$BASEDIR/benchmark-client/go-client" && go build -o benchmark-client .)
+(cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
 echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
 
 # ──────────────────────────────────────────────
