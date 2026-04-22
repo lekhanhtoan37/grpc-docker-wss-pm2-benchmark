@@ -6,7 +6,7 @@ const BROKER = process.env.KAFKA_BROKER || "192.168.0.9:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.env.CONTAINER_ID || process.pid;
 const GROUP_ID = `uws-benchmark-worker-${INSTANCE}`;
-const MAX_BACKPRESSURE = 128 * 1024 * 1024;
+const MAX_BACKPRESSURE = 256 * 1024 * 1024;
 const WARN_THRESHOLD = 0.8;
 
 const ts = () => new Date().toISOString();
