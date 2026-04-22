@@ -2,7 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/main/.schema/devbox.schema.json",
   "packages": [
     "nodejs@20",
-    "nodePackages.pm2@latest",
+    "nodePackages_latest.npm",
+    "nodePackages_latest.pm2",
     "go@1.23"
   ]
 }
