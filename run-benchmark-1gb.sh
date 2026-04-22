@@ -5,17 +5,7 @@ echo "=== 1GB/s Throughput Benchmark ==="
 
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Setup devbox environment
-if [ -z "${DEVBOX_SHELL_ENABLED:-}" ]; then
-  echo "Entering devbox shell (Node 20 + PM2 + Go)..."
-  if command -v devbox &>/dev/null; then
-    exec devbox run -- "$BASEDIR/run-benchmark-1gb.sh" "$@"
-  else
-    echo "WARN: devbox not found, using system tools"
-  fi
-fi
-
-echo "Node: $(node --version), PM2: $(npx pm2 --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
+echo "Node: $(node --version), Go: $(go version 2>/dev/null || echo 'N/A')"
 
 PM2_USER="${SUDO_USER:-$(whoami)}"
 PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"

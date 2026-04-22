@@ -6,7 +6,6 @@ module.exports = {
       instances: 3,
       exec_mode: "cluster",
       max_memory_restart: "16G",
-      max_memory_restart: "16G",
       node_args: "--max-old-space-size=16384",
       env: {
         PORT: 8091,
