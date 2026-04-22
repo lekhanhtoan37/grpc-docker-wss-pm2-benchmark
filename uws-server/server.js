@@ -43,6 +43,7 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset }) => {
+      if (shuttingDown) return;
       const msgs = batch.messages;
       const len = msgs.length;
       const toDelete = [];
@@ -152,14 +153,22 @@ const app = uWS
     }
   });
 
+let shuttingDown = false;
+
 const shutdown = async () => {
-  console.log(`[uws:${INSTANCE}] Shutting down`);
-  for (const ws of clients) safeClose(ws);
-  await consumer.disconnect().catch(() => {});
-  if (listenSocket) {
-    uWS.us_listen_socket_close(listenSocket);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[uws:${INSTANCE}] Shutting down, closing ${clients.size} clients...`);
+  for (const ws of clients) {
+    try { ws.end(1001, "server shutdown"); } catch {}
   }
-  process.exit(0);
+  setTimeout(async () => {
+    await consumer.disconnect().catch(() => {});
+    if (listenSocket) {
+      uWS.us_listen_socket_close(listenSocket);
+    }
+    process.exit(0);
+  }, 1000);
 };
 
 process.on("SIGINT", shutdown);

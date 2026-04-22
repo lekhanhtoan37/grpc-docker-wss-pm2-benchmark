@@ -125,6 +125,7 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset }) => {
+      if (shuttingDown) return;
       const msgs = batch.messages;
       const len = msgs.length;
       batchCount++;
@@ -196,15 +197,21 @@ async function run() {
   retryConsumer();
 }
 
+let shuttingDown = false;
+
 const shutdown = async () => {
-  console.log(`[grpc:${CONTAINER_ID}] Shutting down`);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[grpc:${CONTAINER_ID}] Shutting down, ending ${activeCalls.size} streams...`);
   if (lingerTimer) clearTimeout(lingerTimer);
   await flushToStreams();
   for (const call of activeCalls) {
     try { call.end(); } catch {}
   }
-  await consumer.disconnect().catch(() => {});
-  process.exit(0);
+  setTimeout(async () => {
+    await consumer.disconnect().catch(() => {});
+    process.exit(0);
+  }, 1000);
 };
 
 process.on("SIGINT", shutdown);

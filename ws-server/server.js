@@ -34,6 +34,7 @@ async function startConsumer() {
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset }) => {
+      if (shuttingDown) return;
       const msgs = batch.messages;
       const len = msgs.length;
       const toDelete = [];
@@ -88,11 +89,20 @@ server.listen(PORT, () => {
   if (process.send) process.send("ready");
 });
 
+let shuttingDown = false;
+
 const shutdown = async () => {
-  console.log(`[ws:${INSTANCE}] Shutting down`);
-  for (const ws of clients) ws.close();
-  await consumer.disconnect().catch(() => {});
-  process.exit(0);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[ws:${INSTANCE}] Shutting down, closing ${clients.size} clients...`);
+  for (const ws of clients) {
+    try { ws.close(1001, "server shutdown"); } catch {}
+  }
+  setTimeout(async () => {
+    await consumer.disconnect().catch(() => {});
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000);
+  }, 1000);
 };
 
 process.on("SIGINT", shutdown);
