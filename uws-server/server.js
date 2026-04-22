@@ -10,9 +10,9 @@ const MAX_BACKPRESSURE = 256 * 1024 * 1024;
 const WARN_THRESHOLD = 0.8;
 
 const ts = () => new Date().toISOString();
-const log = (...a) => log(`[${ts()}]`, ...a);
-const warn = (...a) => warn(`[${ts()}]`, ...a);
-const err = (...a) => err(`[${ts()}]`, ...a);
+const log = (...a) => console.log(`[${ts()}]`, ...a);
+const warn = (...a) => console.warn(`[${ts()}]`, ...a);
+const err = (...a) => console.error(`[${ts()}]`, ...a);
 
 const clients = new Set();
 let connCounter = 0;
