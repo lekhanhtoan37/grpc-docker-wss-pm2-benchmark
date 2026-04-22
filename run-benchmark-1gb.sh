@@ -373,16 +373,20 @@ echo "Waiting 5s for WS workers..."
 sleep 5
 
 echo ""
-echo "--- Step 4d: Start uWS servers (PM2) ---"
-NVM_DIR="${PM2_HOME_USER}/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-NODE_20_BIN="$(nvm which 20 2>/dev/null || which node 2>/dev/null)"
-echo "uWS Node interpreter: $NODE_20_BIN ($(node --version))"
+echo "--- Step 4d: Start uWS servers (PM2 via devbox) ---"
 cd "$BASEDIR/uws-server"
-PATH="$(dirname "$NODE_20_BIN"):$PATH" run_as_user npm install --silent
-cd "$BASEDIR/uws-server"
-NODE_20_PATH="$NODE_20_BIN" run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
-NODE_20_PATH="$NODE_20_BIN" run_pm2 start ecosystem.config.js
+if command -v devbox &>/dev/null; then
+  echo "Using devbox for Node 20 + PM2"
+  devbox install 2>/dev/null || true
+  run_as_user npm install --silent
+  devbox run -- pm2 describe uws-benchmark &>/dev/null && devbox run -- pm2 delete uws-benchmark 2>/dev/null || true
+  devbox run -- pm2 start ecosystem.config.js
+else
+  echo "WARN: devbox not found, falling back to system node"
+  run_as_user npm install --silent
+  run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
+  run_pm2 start ecosystem.config.js
+fi
 cd "$BASEDIR"
 echo "Waiting 5s for uWS workers..."
 sleep 5
@@ -502,6 +506,7 @@ cleanup() {
   cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   run_pm2 stop ws-benchmark 2>/dev/null || true
   run_pm2 stop uws-benchmark 2>/dev/null || true
+  cd "$BASEDIR/uws-server" && devbox run -- pm2 stop uws-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -523,7 +528,8 @@ for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-
   echo "  === WS server (pm2 logs, last 10 lines) ==="
   run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
   echo "  === uWS server (pm2 logs, last 10 lines) ==="
-  run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+  cd "$BASEDIR/uws-server" && devbox run -- pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+  cd "$BASEDIR"
   echo "--- End server diagnostics ---"
 
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
@@ -576,7 +582,8 @@ echo "--- Step 8: Collect system info ---"
   run_pm2 show ws-benchmark 2>/dev/null || true
   echo ""
   echo "=== PM2 Metrics (uWS) ==="
-  run_pm2 show uws-benchmark 2>/dev/null || true
+  cd "$BASEDIR/uws-server" && devbox run -- pm2 show uws-benchmark 2>/dev/null || true
+  cd "$BASEDIR"
   echo ""
   echo "=== Docker Stats ==="
   docker stats --no-stream \
