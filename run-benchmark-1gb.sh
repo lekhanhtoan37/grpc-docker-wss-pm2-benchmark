@@ -15,7 +15,7 @@ if [ -z "${DEVBOX_SHELL_ENABLED:-}" ]; then
   fi
 fi
 
-echo "Node: $(node --version), PM2: $(pm2 --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
+echo "Node: $(node --version), PM2: $(npx pm2 --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
 
 PM2_USER="${SUDO_USER:-$(whoami)}"
 PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
@@ -25,7 +25,7 @@ run_as_user() {
 }
 
 run_pm2() {
-  run_as_user pm2 "$@"
+  run_as_user npx pm2 "$@"
 }
 
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
@@ -560,7 +560,7 @@ echo "--- Step 8: Collect system info ---"
   echo "Kernel: $(uname -a)"
   echo "Node: $(node --version)"
   echo "Docker: $(docker --version)"
-  echo "PM2: $(run_pm2 --version 2>/dev/null || echo 'not found')"
+  echo "PM2: $(npx pm2 --version 2>/dev/null || echo 'not found')"
   echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
   echo "Kafka benchmark port: 192.168.0.5:${KAFKA_PORT}"
   echo ""

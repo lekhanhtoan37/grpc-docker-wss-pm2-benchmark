@@ -6,7 +6,7 @@
   ],
   "shell": {
     "init_scripts": [
-      "which pm2 >/dev/null 2>&1 || npm install -g pm2 2>/dev/null || true"
+      "test -d node_modules/pm2 || npm install pm2"
     ]
   }
 }
