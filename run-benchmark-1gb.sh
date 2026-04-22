@@ -13,8 +13,11 @@ if [ -d "$NVM_DIR/versions/node" ]; then
   NODE_PATH="$(ls -td "$NVM_DIR"/versions/node/*/bin 2>/dev/null | head -1)"
 fi
 RESOLVED_PATH="${NODE_PATH:+$NODE_PATH:}${PATH}"
+for gopath in /usr/local/go/bin "${PM2_HOME_USER}/go/bin" "${PM2_HOME_USER}/.local/bin"; do
+  [ -d "$gopath" ] && RESOLVED_PATH="${RESOLVED_PATH}:${gopath}"
+done
 
-echo "Node: $(PATH="$RESOLVED_PATH" node --version), npm: $(PATH="$RESOLVED_PATH" npm --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
+echo "Node: $(PATH="$RESOLVED_PATH" node --version), npm: $(PATH="$RESOLVED_PATH" npm --version 2>/dev/null || echo 'N/A'), Go: $(PATH="$RESOLVED_PATH" go version 2>/dev/null || echo 'N/A')"
 
 run_as_user() {
   sudo -u "$PM2_USER" env PATH="${RESOLVED_PATH}" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
@@ -409,7 +412,7 @@ echo "--- Step 6: Install deps + build Go client ---"
 PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/benchmark-client"
 PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/producer"
 PATH="$RESOLVED_PATH" npm rebuild --prefix "$BASEDIR/producer"
-PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found in PATH=$RESOLVED_PATH"; exit 1; }
+PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found. Install Go: https://go.dev/dl/"; exit 1; }
 echo "Building Go benchmark client..."
 (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
 echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
