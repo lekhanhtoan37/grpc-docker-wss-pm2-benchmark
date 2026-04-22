@@ -9,6 +9,11 @@ const GROUP_ID = `uws-benchmark-worker-${INSTANCE}`;
 const MAX_BACKPRESSURE = 128 * 1024 * 1024;
 const WARN_THRESHOLD = 0.8;
 
+const ts = () => new Date().toISOString();
+const log = (...a) => log(`[${ts()}]`, ...a);
+const warn = (...a) => warn(`[${ts()}]`, ...a);
+const err = (...a) => err(`[${ts()}]`, ...a);
+
 const clients = new Set();
 let connCounter = 0;
 const YIELD_EVERY = 2000;
@@ -37,9 +42,9 @@ function safeClose(ws) {
 
 async function startConsumer() {
   await consumer.connect();
-  console.log(`[uws:${INSTANCE}] Kafka consumer connected (group: ${GROUP_ID})`);
+  log(`[uws:${INSTANCE}] Kafka consumer connected (group: ${GROUP_ID})`);
   await consumer.subscribe({ topic: TOPIC, fromBeginning: false });
-  console.log(`[uws:${INSTANCE}] Subscribed to ${TOPIC}`);
+  log(`[uws:${INSTANCE}] Subscribed to ${TOPIC}`);
   await consumer.run({
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset }) => {
@@ -58,7 +63,7 @@ async function startConsumer() {
             const sendStatus = ws.send(payload, false);
             if (sendStatus === 2) {
               const buffered = ws.getBufferedAmount();
-              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send DROPPED (status=2), buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
+              warn(`[uws:${INSTANCE}] conn#${ws._connId} send DROPPED (status=2), buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
               toDelete.push(ws);
               ws._alive = false;
               break;
@@ -66,13 +71,13 @@ async function startConsumer() {
             if (sendStatus === 0 && i > 0 && i % YIELD_EVERY === 0) {
               const buffered = ws.getBufferedAmount();
               if (buffered >= MAX_BACKPRESSURE) {
-                console.warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure full: ${(buffered / 1024 / 1024).toFixed(2)}MB, closing`);
+                warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure full: ${(buffered / 1024 / 1024).toFixed(2)}MB, closing`);
                 toDelete.push(ws);
                 ws._alive = false;
                 break;
               }
               if (buffered > MAX_BACKPRESSURE * WARN_THRESHOLD && !ws._warned80) {
-                console.warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure >=80%: ${(buffered / 1024 / 1024).toFixed(2)}MB / ${(MAX_BACKPRESSURE / 1024 / 1024).toFixed(0)}MB`);
+                warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure >=80%: ${(buffered / 1024 / 1024).toFixed(2)}MB / ${(MAX_BACKPRESSURE / 1024 / 1024).toFixed(0)}MB`);
                 ws._warned80 = true;
               }
               if (buffered < MAX_BACKPRESSURE * WARN_THRESHOLD) {
@@ -82,7 +87,7 @@ async function startConsumer() {
             }
           }
         } catch (e) {
-          console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send error: ${e.message}`);
+          warn(`[uws:${INSTANCE}] conn#${ws._connId} send error: ${e.message}`);
           toDelete.push(ws);
           ws._alive = false;
         }
@@ -101,7 +106,7 @@ const retryConsumer = async () => {
   try {
     await startConsumer();
   } catch (err) {
-    console.error(`[uws:${INSTANCE}] Kafka consumer error: ${err.message}, restarting in 5s...`);
+    err(`[uws:${INSTANCE}] Kafka consumer error: ${err.message}, restarting in 5s...`);
     setTimeout(retryConsumer, 5000);
   }
 };
@@ -129,16 +134,16 @@ const app = uWS
     open: (ws) => {
       clients.add(ws);
       ws._alive = true;
-      console.log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
+      log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
     },
     close: (ws) => {
       ws._alive = false;
       clients.delete(ws);
       try {
         const buffered = ws.getBufferedAmount();
-        console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
+        log(`[uws:${INSTANCE}] conn#${ws._connId} closed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
       } catch {
-        console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed (total: ${clients.size})`);
+        log(`[uws:${INSTANCE}] conn#${ws._connId} closed (total: ${clients.size})`);
       }
     },
     message: () => {},
@@ -149,10 +154,10 @@ const app = uWS
   .listen(PORT, (token) => {
     if (token) {
       listenSocket = token;
-      console.log(`[uws:${INSTANCE}] Listening on :${PORT}`);
+      log(`[uws:${INSTANCE}] Listening on :${PORT}`);
       if (process.send) process.send("ready");
     } else {
-      console.error(`[uws:${INSTANCE}] Failed to listen on :${PORT}`);
+      err(`[uws:${INSTANCE}] Failed to listen on :${PORT}`);
       process.exit(1);
     }
   });
@@ -162,7 +167,7 @@ let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[uws:${INSTANCE}] Shutting down, closing ${clients.size} clients...`);
+  log(`[uws:${INSTANCE}] Shutting down, closing ${clients.size} clients...`);
   for (const ws of clients) {
     try { ws.end(1001, "server shutdown"); } catch {}
   }
