@@ -40,7 +40,7 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 KAFKA_VERSION="3.9.2"
 SCALA_VERSION="2.13"
 KAFKA_DIR="/opt/kafka-benchmark"
-KAFKA_DATA="/home/kafka-benchmark/data"
+KAFKA_DATA="/data/kafka-benchmark"
 KAFKA_USER="kafka-bench"
 KAFKA_SERVICE="kafka-benchmark"
 KAFKA_PORT=9091
@@ -131,7 +131,7 @@ advertised.listeners=PLAINTEXT://192.168.0.9:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
-log.dirs=/home/kafka-benchmark/data
+log.dirs=/data/kafka-benchmark
 
 socket.send.buffer.bytes=1048576
 socket.receive.buffer.bytes=1048576
@@ -230,7 +230,7 @@ advertised.listeners=PLAINTEXT://192.168.0.9:9091
 controller.listener.names=CONTROLLER
 listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
 controller.quorum.voters=1@127.0.0.1:9093
-log.dirs=/home/kafka-benchmark/data
+log.dirs=/data/kafka-benchmark
 
 socket.send.buffer.bytes=1048576
 socket.receive.buffer.bytes=1048576
