@@ -72,6 +72,8 @@ func newGroupStats(conns int) *GroupStats {
 func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	readBuf := make([]byte, 256*1024)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -80,7 +82,6 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		}
 
 		opts := &websocket.DialOptions{
-			HTTPClient:          nil,
 			CompressionMode:     websocket.CompressionDisabled,
 			CompressionThreshold: 0,
 		}
@@ -100,7 +101,6 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		for {
 			_, reader, err := conn.Reader(ctx)
 			if err != nil {
-				log.Printf("[client] %s conn#%d disconnected: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				stats[gi].conns[ci].connActive.Store(false)
 				stats[gi].conns[ci].count.Add(localCount)
 				stats[gi].conns[ci].bytes.Add(localBytes)
@@ -110,9 +110,16 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				break
 			}
 
-			msg, err := io.ReadAll(reader)
+			msgSize := int(reader.(*io.LimitedReader).N)
+			var msg []byte
+			if msgSize <= cap(readBuf) {
+				msg = readBuf[:msgSize]
+				_, err = io.ReadFull(reader, msg)
+			} else {
+				msg = make([]byte, msgSize)
+				_, err = io.ReadFull(reader, msg)
+			}
 			if err != nil {
-				log.Printf("[client] %s conn#%d read error: %v", groups[gi].Name, ci+1, err)
 				stats[gi].conns[ci].connActive.Store(false)
 				conn.Close(websocket.StatusInternalError, "read error")
 				break
@@ -120,12 +127,11 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 
 			if !stats[gi].conns[ci].firstMsg.Load() {
 				stats[gi].conns[ci].firstMsg.Store(true)
-				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(msg))
+				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, msgSize)
 			}
 
-			msgLen := int64(len(msg))
 			localCount++
-			localBytes += msgLen
+			localBytes += int64(msgSize)
 
 			if measuring.Load() {
 				ts := extractTimestamp(msg)
