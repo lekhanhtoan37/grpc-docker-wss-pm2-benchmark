@@ -9,7 +9,7 @@ module.exports = {
       node_args: "--max-old-space-size=16384",
       env: {
         PORT: 8091,
-        KAFKA_BROKER: "192.168.0.5:9091",
+        KAFKA_BROKER: "192.168.0.9:9091",
         KAFKA_TOPIC: "benchmark-messages",
         UV_THREADPOOL_SIZE: "16",
       },

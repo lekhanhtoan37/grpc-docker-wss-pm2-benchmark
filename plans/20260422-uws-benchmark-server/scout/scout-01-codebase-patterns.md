@@ -121,7 +121,7 @@ message StreamResponse { repeated MessageEntry messages = 1; }
   node_args: "--max-old-space-size=16384",
   env: {
     PORT: 8090,                   // single shared port (cluster mode)
-    KAFKA_BROKER: "192.168.0.5:9091",
+    KAFKA_BROKER: "192.168.0.9:9091",
     KAFKA_TOPIC: "benchmark-messages",
     UV_THREADPOOL_SIZE: "16",
   },
@@ -179,7 +179,7 @@ CMD ["node", "--max-old-space-size=16384", "server.js"]
 ```
 
 ### Common Environment Variables (both compose files)
-- `KAFKA_BROKER: "192.168.0.5:9091"`
+- `KAFKA_BROKER: "192.168.0.9:9091"`
 - `KAFKA_TOPIC: "benchmark-messages"`
 - `CONTAINER_ID` — unique per container
 - `GRPC_PORT` — only in host mode (defaults to 50051 in Dockerfile)
@@ -193,7 +193,7 @@ CMD ["node", "--max-old-space-size=16384", "server.js"]
 | WS server (PM2) | Host / cluster | **8090** (shared) |
 | gRPC server (bridge) | Docker bridge | **50051**, **50052**, **50053** |
 | gRPC server (host) | Docker host | **60051**, **60052**, **60053** |
-| Kafka broker | Systemd / host | **9091** (192.168.0.5) |
+| Kafka broker | Systemd / host | **9091** (192.168.0.9) |
 | Kafka controller | Systemd / host | **9093** (127.0.0.1) |
 
 ---
@@ -297,10 +297,10 @@ groups = []Group{
 
 | Step | Action | Details |
 |------|--------|---------|
-| 1 | Setup Kafka | Install JDK 17, download Kafka 3.9.2, create `kafka-bench` user, configure KRaft (host: 192.168.0.5:9091), install systemd service |
+| 1 | Setup Kafka | Install JDK 17, download Kafka 3.9.2, create `kafka-bench` user, configure KRaft (host: 192.168.0.9:9091), install systemd service |
 | 1b | Reset Kafka | Always stop → clean data → reformat KRaft → restart (ensures clean state) |
 | 2 | Create topic | `benchmark-messages` — 12 partitions, replication 1, 2min retention, 1GB retention bytes |
-| 3 | iptables | Allow Docker containers (172.16.0.0/12) to reach Kafka at 192.168.0.5:9091 |
+| 3 | iptables | Allow Docker containers (172.16.0.0/12) to reach Kafka at 192.168.0.9:9091 |
 | 4 | Build + start gRPC | Build Docker images (`--no-cache`), start bridge containers (ports 50051-50053), then host containers (ports 60051-60053) |
 | 4 | Start WS (PM2) | `npm install`, `pm2 start ecosystem.config.js` — 3 cluster instances on port 8090 |
 | 5 | Health check | Runs `health-check-1gb.sh` |

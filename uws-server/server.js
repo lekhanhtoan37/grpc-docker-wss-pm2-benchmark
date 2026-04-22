@@ -2,7 +2,7 @@ const uWS = require("uWebSockets.js");
 const { Kafka } = require("kafkajs");
 
 const PORT = parseInt(process.env.PORT || "8091", 10);
-const BROKER = process.env.KAFKA_BROKER || "192.168.0.5:9091";
+const BROKER = process.env.KAFKA_BROKER || "192.168.0.9:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.env.CONTAINER_ID || process.pid;
 const GROUP_ID = `uws-benchmark-worker-${INSTANCE}`;

@@ -3,7 +3,7 @@ const protoLoader = require("@grpc/proto-loader");
 const { Kafka } = require("kafkajs");
 
 const PROTO_PATH = process.env.PROTO_PATH || "/app/proto/benchmark.proto";
-const BROKER = process.env.KAFKA_BROKER || "192.168.0.5:9091";
+const BROKER = process.env.KAFKA_BROKER || "192.168.0.9:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const CONTAINER_ID = process.env.CONTAINER_ID || "default";
 const GROUP_ID = `grpc-benchmark-${CONTAINER_ID}`;

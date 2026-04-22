@@ -42,7 +42,7 @@ services:
     container_name: uws-server-1
     environment:
       CONTAINER_ID: "1"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
       PORT: "8091"
     ports:
@@ -53,7 +53,7 @@ services:
     container_name: uws-server-2
     environment:
       CONTAINER_ID: "2"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
       PORT: "8091"
     ports:
@@ -64,7 +64,7 @@ services:
     container_name: uws-server-3
     environment:
       CONTAINER_ID: "3"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
       PORT: "8091"
     ports:
@@ -84,7 +84,7 @@ services:
     environment:
       CONTAINER_ID: "host-1"
       PORT: "60061"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
 
   uws-host-2:
@@ -94,7 +94,7 @@ services:
     environment:
       CONTAINER_ID: "host-2"
       PORT: "60062"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
 
   uws-host-3:
@@ -104,7 +104,7 @@ services:
     environment:
       CONTAINER_ID: "host-3"
       PORT: "60063"
-      KAFKA_BROKER: "192.168.0.5:9091"
+      KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
 ```
 

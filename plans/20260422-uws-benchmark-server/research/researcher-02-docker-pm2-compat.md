@@ -138,7 +138,7 @@ RUN npm install --omit=dev
 COPY server.js .
 
 ENV PORT=8090
-ENV KAFKA_BROKER=192.168.0.5:9091
+ENV KAFKA_BROKER=192.168.0.9:9091
 
 CMD ["node", "--max-old-space-size=16384", "server.js"]
 ```
@@ -183,7 +183,7 @@ services:
     build: ../ws-server
     network_mode: host
     environment:
-      - KAFKA_BROKER=192.168.0.5:9091
+      - KAFKA_BROKER=192.168.0.9:9091
       - KAFKA_TOPIC=benchmark-messages
       - PORT=8090
 ```
