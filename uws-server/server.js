@@ -80,7 +80,7 @@ const app = uWS
     compression: 0,
     maxPayloadLength: 0,
     idleTimeout: 120,
-    maxBackpressure: 1024 * 1024,
+    maxBackpressure: 64 * 1024 * 1024,
     upgrade: (res, req, context) => {
       res.upgrade(
         {},
