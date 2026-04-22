@@ -45,6 +45,22 @@ KAFKA_CONTROLLER_PORT=9093
 
 mkdir -p "$RESULTS_DIR"
 
+echo ""
+echo "--- Step 0: Install system dependencies ---"
+DEPS_NEEDED=false
+for pkg in build-essential python3 make g++; do
+  if ! dpkg -s "$pkg" &>/dev/null; then
+    DEPS_NEEDED=true
+    break
+  fi
+done
+if [ "$DEPS_NEEDED" = true ]; then
+  echo "Installing build-essential, python3, make, g++..."
+  apt update && apt install -y build-essential python3 make g++
+else
+  echo "Build dependencies already installed."
+fi
+
 # ──────────────────────────────────────────────
 # Step 1: Setup Kafka (idempotent)
 # ──────────────────────────────────────────────
