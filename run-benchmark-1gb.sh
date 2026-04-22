@@ -575,9 +575,11 @@ for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-
   run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
   echo "--- End server diagnostics ---"
 
+  CLIENT_LOG="$RESULTS_DIR/client-run-${run}-${TIMESTAMP}.log"
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
     --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
-    2>&1 | tee "$RESULTS_DIR/1gb-run-${run}-${TIMESTAMP}.log"
+    2>&1 | tee "$CLIENT_LOG"
+  echo "Client log: $CLIENT_LOG"
   echo ""
 
   stop_producer
