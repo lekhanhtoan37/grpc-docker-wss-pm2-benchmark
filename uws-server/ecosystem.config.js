@@ -11,7 +11,7 @@ module.exports = {
   apps: [
     {
       name: "uws-benchmark",
-      script: "./server.js",
+      script: path.join(__dirname, "server.js"),
       interpreter: node20,
       instances: 3,
       exec_mode: "cluster",
