@@ -1,9 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/main/.schema/devbox.schema.json",
   "packages": [
-    "nodejs@20",
-    "nodePackages_latest.npm",
-    "nodePackages_latest.pm2",
-    "go@1.23"
-  ]
+    "nodejs_20",
+    "go_1_23"
+  ],
+  "shell": {
+    "init_scripts": [
+      "which pm2 >/dev/null 2>&1 || npm install -g pm2 2>/dev/null || true"
+    ]
+  }
 }
