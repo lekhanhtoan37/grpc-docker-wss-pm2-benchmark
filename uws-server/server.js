@@ -55,7 +55,7 @@ async function startConsumer() {
           for (let i = 0; i < len; i++) {
             const payload = msgs[i].value.toString();
             const ok = ws.send(payload, false);
-            if (!ok) {
+            if (ok === false) {
               const buffered = ws.getBufferedAmount();
               console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send failed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
               toDelete.push(ws);
