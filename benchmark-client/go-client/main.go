@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,7 +18,7 @@ import (
 	"time"
 
 	"github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	pb "benchmark-client/proto"
@@ -80,17 +79,17 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		default:
 		}
 
-		dialer := websocket.DefaultDialer
-		dialer.EnableCompression = false
-		dialer.ReadBufferSize = 1024 * 1024
-		dialer.WriteBufferSize = 256
-		conn, _, err := dialer.DialContext(ctx, endpoint, http.Header{})
+		opts := &websocket.DialOptions{
+			HTTPClient:          nil,
+			CompressionMode:     websocket.CompressionDisabled,
+			CompressionThreshold: 0,
+		}
+		conn, _, err := websocket.Dial(ctx, endpoint, opts)
 		if err != nil {
 			log.Printf("[client] %s conn#%d connect failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
-		conn.SetReadLimit(64 * 1024 * 1024)
 
 		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
 		stats[gi].conns[ci].connActive.Store(true)
@@ -99,7 +98,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		lastFlush := time.Now()
 
 		for {
-			_, message, err := conn.ReadMessage()
+			_, reader, err := conn.Reader(ctx)
 			if err != nil {
 				log.Printf("[client] %s conn#%d disconnected: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				stats[gi].conns[ci].connActive.Store(false)
@@ -107,30 +106,36 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				stats[gi].conns[ci].bytes.Add(localBytes)
 				stats[gi].conns[ci].rawCount.Add(localCount)
 				stats[gi].conns[ci].rawBytes.Add(localBytes)
-				conn.Close()
+				conn.Close(websocket.StatusInternalError, "read error")
+				break
+			}
+
+			msg, err := io.ReadAll(reader)
+			if err != nil {
+				log.Printf("[client] %s conn#%d read error: %v", groups[gi].Name, ci+1, err)
+				stats[gi].conns[ci].connActive.Store(false)
+				conn.Close(websocket.StatusInternalError, "read error")
 				break
 			}
 
 			if !stats[gi].conns[ci].firstMsg.Load() {
 				stats[gi].conns[ci].firstMsg.Store(true)
-				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(message))
+				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(msg))
 			}
 
-			msgLen := int64(len(message))
+			msgLen := int64(len(msg))
 			localCount++
 			localBytes += msgLen
 
-			if !measuring.Load() {
-				continue
-			}
-
-			ts := extractTimestamp(message)
-			if ts > 0 {
-				latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
-				if latencyMicros < 1 {
-					latencyMicros = 1
+			if measuring.Load() {
+				ts := extractTimestamp(msg)
+				if ts > 0 {
+					latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
+					if latencyMicros < 1 {
+						latencyMicros = 1
+					}
+					stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 				}
-				stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 			}
 
 			if localCount%2000 == 0 {
@@ -147,7 +152,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 			}
 		}
 
-		conn.Close()
+		conn.CloseNow()
 		time.Sleep(2 * time.Second)
 	}
 }
