@@ -2,11 +2,10 @@ module.exports = {
   apps: [
     {
       name: "uws-benchmark",
-      script: "./server.js",
+      script: "./start.sh",
+      interpreter: "bash",
       instances: 3,
       exec_mode: "cluster",
-      interpreter: process.env.NODE_20_PATH || "node",
-      node_args: "--max-old-space-size=16384",
       env: {
         PORT: 8091,
         KAFKA_BROKER: "192.168.0.5:9091",
