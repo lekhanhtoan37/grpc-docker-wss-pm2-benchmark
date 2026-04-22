@@ -54,16 +54,22 @@ async function startConsumer() {
           }
           for (let i = 0; i < len; i++) {
             const payload = msgs[i].value.toString();
-            const ok = ws.send(payload, false);
-            if (ok === false) {
+            const sendStatus = ws.send(payload, false);
+            if (sendStatus === 2) {
               const buffered = ws.getBufferedAmount();
-              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send failed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
+              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send DROPPED (status=2), buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
               toDelete.push(ws);
               ws._alive = false;
               break;
             }
-            if (i > 0 && i % YIELD_EVERY === 0) {
+            if (sendStatus === 0 && i > 0 && i % YIELD_EVERY === 0) {
               const buffered = ws.getBufferedAmount();
+              if (buffered >= MAX_BACKPRESSURE) {
+                console.warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure full: ${(buffered / 1024 / 1024).toFixed(2)}MB, closing`);
+                toDelete.push(ws);
+                ws._alive = false;
+                break;
+              }
               if (buffered > MAX_BACKPRESSURE * WARN_THRESHOLD && !ws._warned80) {
                 console.warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure >=80%: ${(buffered / 1024 / 1024).toFixed(2)}MB / ${(MAX_BACKPRESSURE / 1024 / 1024).toFixed(0)}MB`);
                 ws._warned80 = true;
