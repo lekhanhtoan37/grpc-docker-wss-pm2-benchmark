@@ -78,9 +78,10 @@ const app = uWS
   .App()
   .ws("/*", {
     compression: 0,
-    maxPayloadLength: 0,
+    maxPayloadLength: 16 * 1024 * 1024,
     idleTimeout: 120,
     maxBackpressure: 128 * 1024 * 1024,
+    closeOnBackpressureLimit: false,
     upgrade: (res, req, context) => {
       res.upgrade(
         {},
