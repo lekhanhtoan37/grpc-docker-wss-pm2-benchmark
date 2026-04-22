@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,21 +82,31 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 
 		dialer := websocket.DefaultDialer
 		dialer.EnableCompression = false
+		dialer.ReadBufferSize = 1024 * 1024
+		dialer.WriteBufferSize = 256
 		conn, _, err := dialer.DialContext(ctx, endpoint, http.Header{})
 		if err != nil {
 			log.Printf("[client] %s conn#%d connect failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		conn.SetReadLimit(64 * 1024 * 1024)
 
 		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
 		stats[gi].conns[ci].connActive.Store(true)
+
+		var localCount, localBytes int64
+		lastFlush := time.Now()
 
 		for {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				log.Printf("[client] %s conn#%d disconnected: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				stats[gi].conns[ci].connActive.Store(false)
+				stats[gi].conns[ci].count.Add(localCount)
+				stats[gi].conns[ci].bytes.Add(localBytes)
+				stats[gi].conns[ci].rawCount.Add(localCount)
+				stats[gi].conns[ci].rawBytes.Add(localBytes)
 				conn.Close()
 				break
 			}
@@ -105,35 +116,60 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(message))
 			}
 
+			msgLen := int64(len(message))
+			localCount++
+			localBytes += msgLen
+
 			if !measuring.Load() {
 				continue
 			}
 
-			var msg struct {
-				Timestamp float64 `json:"timestamp"`
-			}
-			if err := json.Unmarshal(message, &msg); err != nil {
-				continue
+			ts := extractTimestamp(message)
+			if ts > 0 {
+				latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
+				if latencyMicros < 1 {
+					latencyMicros = 1
+				}
+				stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 			}
 
-			nowMicros := time.Now().UnixMicro()
-			tsMicros := int64(msg.Timestamp * 1000)
-			latencyMicros := nowMicros - tsMicros
-			if latencyMicros < 1 {
-				latencyMicros = 1
+			if localCount%2000 == 0 {
+				now := time.Now()
+				if now.Sub(lastFlush) >= 100*time.Millisecond {
+					stats[gi].conns[ci].count.Add(localCount)
+					stats[gi].conns[ci].bytes.Add(localBytes)
+					stats[gi].conns[ci].rawCount.Add(localCount)
+					stats[gi].conns[ci].rawBytes.Add(localBytes)
+					localCount = 0
+					localBytes = 0
+					lastFlush = now
+				}
 			}
-			cs := stats[gi].conns[ci]
-			cs.count.Add(1)
-			cs.rawCount.Add(1)
-			msgBytes := int64(len(message))
-			cs.bytes.Add(msgBytes)
-			cs.rawBytes.Add(msgBytes)
-			cs.hist.RecordValue(latencyMicros)
 		}
 
 		conn.Close()
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func extractTimestamp(msg []byte) float64 {
+	idx := bytes.Index(msg, []byte(`"timestamp":`))
+	if idx < 0 {
+		return 0
+	}
+	start := idx + len(`"timestamp":`)
+	if start >= len(msg) {
+		return 0
+	}
+	end := start
+	for end < len(msg) && msg[end] != ',' && msg[end] != '}' {
+		end++
+	}
+	val, err := strconv.ParseFloat(string(msg[start:end]), 64)
+	if err != nil {
+		return 0
+	}
+	return val
 }
 
 func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
