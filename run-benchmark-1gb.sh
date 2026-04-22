@@ -5,13 +5,19 @@ echo "=== 1GB/s Throughput Benchmark ==="
 
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "Node: $(node --version), Go: $(go version 2>/dev/null || echo 'N/A')"
-
 PM2_USER="${SUDO_USER:-$(whoami)}"
 PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
+NVM_DIR="${PM2_HOME_USER}/.nvm"
+NODE_PATH=""
+if [ -d "$NVM_DIR/versions/node" ]; then
+  NODE_PATH="$(ls -td "$NVM_DIR"/versions/node/*/bin 2>/dev/null | head -1)"
+fi
+RESOLVED_PATH="${NODE_PATH:+$NODE_PATH:}${PATH}"
+
+echo "Node: $(PATH="$RESOLVED_PATH" node --version), npm: $(PATH="$RESOLVED_PATH" npm --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
 
 run_as_user() {
-  sudo -u "$PM2_USER" env PATH="$PATH" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
+  sudo -u "$PM2_USER" env PATH="${RESOLVED_PATH}" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
 }
 
 run_pm2() {
@@ -384,9 +390,9 @@ bash "$BASEDIR/health-check-1gb.sh"
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Step 6: Install deps + build Go client ---"
-npm install --silent --prefix "$BASEDIR/benchmark-client"
-npm install --silent --prefix "$BASEDIR/producer"
-npm rebuild --silent --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" npm install --silent --prefix "$BASEDIR/benchmark-client"
+PATH="$RESOLVED_PATH" npm install --silent --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" npm rebuild --silent --prefix "$BASEDIR/producer"
 command -v go >/dev/null || { echo "ERROR: go not found. Install Go first."; exit 1; }
 echo "Building Go benchmark client..."
 (cd "$BASEDIR/benchmark-client/go-client" && go build -o benchmark-client .)
