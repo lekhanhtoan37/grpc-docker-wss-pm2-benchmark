@@ -481,7 +481,7 @@ start_producer() {
   echo "--- Starting $NUM_PRODUCERS producers (target: ${TARGET_MBPS} MB/s each) ---"
   PRODUCER_PIDS=""
   for i in $(seq 1 "$NUM_PRODUCERS"); do
-    KAFKA_BROKER=192.168.0.9:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
+    env PATH="$RESOLVED_PATH" KAFKA_BROKER=192.168.0.9:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
       node --max-old-space-size=16384 "$BASEDIR/producer/producer-rdkafka.js" &
     PRODUCER_PIDS="$PRODUCER_PIDS $!"
   done
