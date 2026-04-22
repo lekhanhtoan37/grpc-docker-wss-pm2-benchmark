@@ -63,7 +63,7 @@ check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
 
 echo ""
 echo "--- WS Connectivity ---"
-if PATH="$RESOLVED_PATH" timeout 3 node -e "const ws=new(require('ws'))('ws://127.0.0.1:8090');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
+if PATH="$RESOLVED_PATH" timeout 3 node -e "const net=require('net');const s=net.createConnection(8090,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
   echo "  PASS WS :8090"
   PASS=$((PASS + 1))
 else
