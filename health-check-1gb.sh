@@ -4,6 +4,20 @@ set -euo pipefail
 echo "=== 1GB/s Benchmark Health Check ==="
 echo ""
 
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+PM2_USER="${SUDO_USER:-$(whoami)}"
+PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
+NVM_DIR="${PM2_HOME_USER}/.nvm"
+NODE_PATH=""
+if [ -d "$NVM_DIR/versions/node" ]; then
+  NODE_PATH="$(ls -td "$NVM_DIR"/versions/node/*/bin 2>/dev/null | head -1)"
+fi
+RESOLVED_PATH="${NODE_PATH:+$NODE_PATH:}${PATH}"
+
+run_as_user() {
+  sudo -u "$PM2_USER" env PATH="${RESOLVED_PATH}" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
+}
+
 PASS=0
 FAIL=0
 
@@ -45,11 +59,17 @@ done
 
 echo ""
 echo "--- PM2 WS ---"
-check "PM2 ws-benchmark" "pm2 describe ws-benchmark"
+check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
 
 echo ""
 echo "--- WS Connectivity ---"
-check "WS :8090" "cd '$(dirname "$0")/ws-server' && node -e \"const ws=new(require('ws'))('ws://127.0.0.1:8090');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)\""
+if PATH="$RESOLVED_PATH" timeout 3 node -e "const ws=new(require('ws'))('ws://127.0.0.1:8090');ws.on('open',()=>{process.exit(0)});setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
+  echo "  PASS WS :8090"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL WS :8090"
+  FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "--- Docker ---"
