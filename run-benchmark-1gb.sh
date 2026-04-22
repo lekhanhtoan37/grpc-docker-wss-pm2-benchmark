@@ -462,14 +462,27 @@ fi
   --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
 
 # ──────────────────────────────────────────────
-# Step 6d: Verify benchmark-messages topic has data
+# Step 6d: Reset consumer groups + recreate topic
 # ──────────────────────────────────────────────
 echo ""
-echo "--- Verify benchmark-messages topic ---"
-"${KAFKA_DIR}/bin/kafka-run-class.sh" kafka.tools.GetOffsetShell \
-  --broker-list "192.168.0.9:${KAFKA_PORT}" \
-  --topic benchmark-messages 2>/dev/null | head -20 || echo "  (no offsets yet - topic is empty, normal before producers start)"
-echo ""
+echo "--- Resetting consumer groups and topic ---"
+CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark" || true)
+for cg in $CONSUMER_GROUPS; do
+  echo "  Deleting consumer group: $cg"
+  "${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --delete --group "$cg" 2>/dev/null || true
+done
+echo "  Deleting topic benchmark-messages..."
+"${KAFKA_DIR}/bin/kafka-topics.sh" --delete --topic benchmark-messages --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
+sleep 2
+echo "  Creating topic benchmark-messages (12 partitions)..."
+"${KAFKA_DIR}/bin/kafka-topics.sh" --create \
+  --topic benchmark-messages \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+  --partitions 12 --replication-factor 1 \
+  --config retention.ms=120000 \
+  --config cleanup.policy=delete \
+  --if-not-exists 2>/dev/null || true
+echo "  Topic reset done."
 
 # ──────────────────────────────────────────────
 # Step 7: Run benchmark
