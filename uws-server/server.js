@@ -132,10 +132,14 @@ const app = uWS
       console.log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
     },
     close: (ws) => {
-      const buffered = ws.getBufferedAmount();
       ws._alive = false;
       clients.delete(ws);
-      console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed by client, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
+      try {
+        const buffered = ws.getBufferedAmount();
+        console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
+      } catch {
+        console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed (total: ${clients.size})`);
+      }
     },
     message: () => {},
   })
