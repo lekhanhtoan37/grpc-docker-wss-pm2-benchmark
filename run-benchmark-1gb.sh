@@ -3,22 +3,22 @@ set -euo pipefail
 
 echo "=== 1GB/s Throughput Benchmark ==="
 
-# Resolve node/npm/pm2 PATH when running via sudo
-PM2_USER="${SUDO_USER:-$(whoami)}"
-PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
-if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
-  export NVM_DIR="${PM2_HOME_USER}/.nvm"
-  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-  NVM_BIN="$(ls -d "${PM2_HOME_USER}/.nvm/versions/node/"*/bin 2>/dev/null | tail -1)"
-  for p in "${PM2_HOME_USER}/.local/bin" "$NVM_BIN" "/usr/local/bin" "/usr/local/go/bin"; do
-    [ -d "$p" ] && export PATH="$p:$PATH"
-  done
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Setup devbox environment
+if [ -z "${DEVBOX_SHELL_ENABLED:-}" ]; then
+  echo "Entering devbox shell (Node 20 + PM2 + Go)..."
+  if command -v devbox &>/dev/null; then
+    exec devbox run -- "$BASEDIR/run-benchmark-1gb.sh" "$@"
+  else
+    echo "WARN: devbox not found, using system tools"
+  fi
 fi
 
-[ -d "/usr/local/go/bin" ] && export PATH="/usr/local/go/bin:$PATH"
+echo "Node: $(node --version), PM2: $(pm2 --version 2>/dev/null || echo 'N/A'), Go: $(go version 2>/dev/null || echo 'N/A')"
 
-command -v node >/dev/null || { echo "ERROR: node not found. Install Node.js first."; exit 1; }
-command -v npm >/dev/null || { echo "ERROR: npm not found. Install Node.js first."; exit 1; }
+PM2_USER="${SUDO_USER:-$(whoami)}"
+PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
 
 run_as_user() {
   sudo -u "$PM2_USER" env PATH="$PATH" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
@@ -373,20 +373,11 @@ echo "Waiting 5s for WS workers..."
 sleep 5
 
 echo ""
-echo "--- Step 4d: Start uWS servers (PM2 via devbox) ---"
+echo "--- Step 4d: Start uWS servers (PM2) ---"
 cd "$BASEDIR/uws-server"
-if command -v devbox &>/dev/null; then
-  echo "Using devbox for Node 20 + PM2"
-  devbox install 2>/dev/null || true
-  run_as_user npm install --silent
-  devbox run -- pm2 describe uws-benchmark &>/dev/null && devbox run -- pm2 delete uws-benchmark 2>/dev/null || true
-  devbox run -- pm2 start ecosystem.config.js
-else
-  echo "WARN: devbox not found, falling back to system node"
-  run_as_user npm install --silent
-  run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
-  run_pm2 start ecosystem.config.js
-fi
+run_as_user npm install --silent
+run_pm2 describe uws-benchmark &>/dev/null && run_pm2 delete uws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for uWS workers..."
 sleep 5
@@ -506,7 +497,6 @@ cleanup() {
   cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   run_pm2 stop ws-benchmark 2>/dev/null || true
   run_pm2 stop uws-benchmark 2>/dev/null || true
-  cd "$BASEDIR/uws-server" && devbox run -- pm2 stop uws-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -528,8 +518,7 @@ for c in grpc-server-1 grpc-server-2 grpc-server-3 grpc-host-1 grpc-host-2 grpc-
   echo "  === WS server (pm2 logs, last 10 lines) ==="
   run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
   echo "  === uWS server (pm2 logs, last 10 lines) ==="
-  cd "$BASEDIR/uws-server" && devbox run -- pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
-  cd "$BASEDIR"
+  run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
   echo "--- End server diagnostics ---"
 
   "$BASEDIR/benchmark-client/go-client/benchmark-client" \
@@ -582,8 +571,7 @@ echo "--- Step 8: Collect system info ---"
   run_pm2 show ws-benchmark 2>/dev/null || true
   echo ""
   echo "=== PM2 Metrics (uWS) ==="
-  cd "$BASEDIR/uws-server" && devbox run -- pm2 show uws-benchmark 2>/dev/null || true
-  cd "$BASEDIR"
+  run_pm2 show uws-benchmark 2>/dev/null || true
   echo ""
   echo "=== Docker Stats ==="
   docker stats --no-stream \
