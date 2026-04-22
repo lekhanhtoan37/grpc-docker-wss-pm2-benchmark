@@ -462,15 +462,27 @@ fi
   --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
 
 # ──────────────────────────────────────────────
-# Step 6d: Reset consumer groups + recreate topic
+# Step 6d: Stop consumers, reset topic, restart consumers
 # ──────────────────────────────────────────────
 echo ""
-echo "--- Resetting consumer groups and topic ---"
+echo "--- Resetting topic (stop consumers first) ---"
+echo "  Stopping PM2 apps..."
+run_pm2 stop ws-benchmark 2>/dev/null || true
+run_pm2 stop uws-benchmark 2>/dev/null || true
+echo "  Stopping Docker containers..."
+cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
+cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
+cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+cd "$BASEDIR"
+sleep 3
+
+echo "  Deleting consumer groups..."
 CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark" || true)
 for cg in $CONSUMER_GROUPS; do
-  echo "  Deleting consumer group: $cg"
   "${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --delete --group "$cg" 2>/dev/null || true
 done
+
 echo "  Deleting topic benchmark-messages..."
 "${KAFKA_DIR}/bin/kafka-topics.sh" --delete --topic benchmark-messages --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
 sleep 2
@@ -479,9 +491,23 @@ echo "  Creating topic benchmark-messages (12 partitions)..."
   --topic benchmark-messages \
   --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
   --partitions 12 --replication-factor 1 \
-  --config retention.ms=120000 \
-  --config cleanup.policy=delete \
-  --if-not-exists 2>/dev/null || true
+  --config retention.ms=600000 \
+  --config cleanup.policy=delete 2>/dev/null || true
+
+echo "  Restarting PM2 apps..."
+cd "$BASEDIR/ws-server"
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR/uws-server"
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "  Restarting Docker containers..."
+cd "$BASEDIR/grpc-server" && docker compose up -d
+cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR/uws-server" && docker compose up -d
+cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "  Waiting 10s for consumers to rejoin..."
+sleep 10
 echo "  Topic reset done."
 
 # ──────────────────────────────────────────────
