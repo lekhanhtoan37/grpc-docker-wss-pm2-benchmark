@@ -28,6 +28,13 @@ const consumer = kafka.consumer({
   sessionTimeout: 30000,
 });
 
+function safeClose(ws) {
+  try {
+    clients.delete(ws);
+    ws.close();
+  } catch {}
+}
+
 async function startConsumer() {
   await consumer.connect();
   console.log(`[uws:${INSTANCE}] Kafka consumer connected (group: ${GROUP_ID})`);
@@ -41,13 +48,18 @@ async function startConsumer() {
       const toDelete = [];
       for (const ws of clients) {
         try {
+          if (!ws._alive) {
+            toDelete.push(ws);
+            continue;
+          }
           for (let i = 0; i < len; i++) {
-            JSON.parse(msgs[i].value.toString());
-            const ok = ws.send(msgs[i].value.toString(), false);
+            const payload = msgs[i].value.toString();
+            const ok = ws.send(payload, false);
             if (!ok) {
               const buffered = ws.getBufferedAmount();
-              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send failed (backpressure full), buffered=${(buffered / 1024 / 1024).toFixed(2)}MB, closing`);
+              console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send failed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
               toDelete.push(ws);
+              ws._alive = false;
               break;
             }
             if (i > 0 && i % YIELD_EVERY === 0) {
@@ -65,11 +77,11 @@ async function startConsumer() {
         } catch (e) {
           console.warn(`[uws:${INSTANCE}] conn#${ws._connId} send error: ${e.message}`);
           toDelete.push(ws);
+          ws._alive = false;
         }
       }
       for (const ws of toDelete) {
-        clients.delete(ws);
-        ws.close();
+        safeClose(ws);
       }
       if (batch.lastOffset) {
         resolveOffset(typeof batch.lastOffset === "function" ? batch.lastOffset() : batch.lastOffset);
@@ -100,7 +112,7 @@ const app = uWS
     closeOnBackpressureLimit: false,
     upgrade: (res, req, context) => {
       res.upgrade(
-        { _connId: ++connCounter, _warned80: false },
+        { _connId: ++connCounter, _warned80: false, _alive: true },
         req.getHeader("sec-websocket-key"),
         req.getHeader("sec-websocket-protocol"),
         req.getHeader("sec-websocket-extensions"),
@@ -109,12 +121,14 @@ const app = uWS
     },
     open: (ws) => {
       clients.add(ws);
+      ws._alive = true;
       console.log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
     },
     close: (ws) => {
       const buffered = ws.getBufferedAmount();
+      ws._alive = false;
       clients.delete(ws);
-      console.log(`[uws:${INSTANCE}] conn#${ws._connId} disconnected, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
+      console.log(`[uws:${INSTANCE}] conn#${ws._connId} closed by client, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
     },
     message: () => {},
   })
@@ -134,7 +148,7 @@ const app = uWS
 
 const shutdown = async () => {
   console.log(`[uws:${INSTANCE}] Shutting down`);
-  for (const ws of clients) ws.close();
+  for (const ws of clients) safeClose(ws);
   await consumer.disconnect().catch(() => {});
   if (listenSocket) {
     uWS.us_listen_socket_close(listenSocket);
