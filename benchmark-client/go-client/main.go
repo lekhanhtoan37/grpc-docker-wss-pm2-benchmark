@@ -111,6 +111,9 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		for {
 			_, reader, err := conn.Reader(ctx)
 			if err != nil {
+				if stats[gi].conns[ci].disconnectCount.Load() < 3 {
+					log.Printf("[client] %s conn#%d read error: %v", groups[gi].Name, ci+1, err)
+				}
 				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				stats[gi].conns[ci].count.Add(localCount)
@@ -123,6 +126,9 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 
 			msg, err := io.ReadAll(reader)
 			if err != nil {
+				if stats[gi].conns[ci].disconnectCount.Load() < 3 {
+					log.Printf("[client] %s conn#%d readall error: %v", groups[gi].Name, ci+1, err)
+				}
 				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				stats[gi].conns[ci].count.Add(localCount)
