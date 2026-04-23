@@ -121,7 +121,12 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 
 			msg, err := io.ReadAll(reader)
 			if err != nil {
+				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
+				stats[gi].conns[ci].count.Add(localCount)
+				stats[gi].conns[ci].bytes.Add(localBytes)
+				stats[gi].conns[ci].rawCount.Add(localCount)
+				stats[gi].conns[ci].rawBytes.Add(localBytes)
 				conn.Close(websocket.StatusInternalError, "read error")
 				break
 			}
@@ -176,7 +181,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		}
 
 		conn.CloseNow()
-		time.Sleep(2 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -294,7 +299,7 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 		}
 
 		conn.Close()
-		time.Sleep(2 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -423,6 +428,7 @@ func main() {
 	measuring.Store(false)
 	measureEnd := time.Now()
 	cancel()
+	wg.Wait()
 
 	measureDuration := measureEnd.Sub(measureStart).Seconds()
 
@@ -468,9 +474,13 @@ func main() {
 
 	fmt.Println("\n=== LATENCY RESULTS ===\n")
 	groupMerged := make([]*hdrhistogram.Histogram, len(groups))
+	fmt.Printf("%-16s %12s\n", "Group", "Latency samples")
+	fmt.Println(strings.Repeat("-", 30))
 	for gi := range groups {
 		groupMerged[gi] = mergeGroupHistogram(stats[gi])
+		fmt.Printf("%-16s %12d\n", groups[gi].Name, groupMerged[gi].TotalCount())
 	}
+	fmt.Println()
 
 	percentiles := []string{"p50", "p75", "p90", "p95", "p99", "p99.9"}
 	pctValues := []float64{50, 75, 90, 95, 99, 99.9}
