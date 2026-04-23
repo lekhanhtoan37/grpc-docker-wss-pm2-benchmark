@@ -87,9 +87,6 @@ function produceLoop() {
 }
 
 const shutdown = () => {
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  const mbps = (bytesSent / 1024 / 1024 / elapsed).toFixed(1);
-  console.log(`\n[producer] Shutdown. ${messagesSent} msgs in ${elapsed}s (${mbps} MB/s)`);
   producer.flush(5000, () => {
     producer.disconnect();
     process.exit(0);
