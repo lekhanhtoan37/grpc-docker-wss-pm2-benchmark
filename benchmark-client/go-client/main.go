@@ -90,15 +90,17 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		connectStart := time.Now()
 		conn, _, err := websocket.Dial(ctx, endpoint, opts)
 		if err != nil {
-			log.Printf("[client] %s conn#%d connect failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 		connectMs := time.Since(connectStart).Milliseconds()
 
-		log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, connectMs)
+		firstConnect := !stats[gi].conns[ci].firstMsg.Load()
+		if firstConnect {
+			log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, connectMs)
+		}
 		stats[gi].conns[ci].connActive.Store(true)
-		if stats[gi].conns[ci].reconnectCount.Load() > 0 || stats[gi].conns[ci].disconnectCount.Load() > 0 {
+		if !firstConnect {
 			stats[gi].conns[ci].reconnectCount.Add(1)
 			stats[gi].conns[ci].reconnectHist.RecordValue(connectMs * 1000)
 		}
@@ -129,11 +131,6 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				stats[gi].conns[ci].rawBytes.Add(localBytes)
 				conn.Close(websocket.StatusInternalError, "read error")
 				break
-			}
-
-			if !stats[gi].conns[ci].firstMsg.Load() {
-				stats[gi].conns[ci].firstMsg.Store(true)
-				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(msg))
 			}
 
 			localBytes += int64(len(msg))
@@ -226,7 +223,6 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			),
 		)
 		if err != nil {
-			log.Printf("[client] %s conn#%d dial failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -234,15 +230,17 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 		client := pb.NewBenchmarkServiceClient(conn)
 		stream, err := client.StreamMessages(ctx, &pb.StreamRequest{ClientId: fmt.Sprintf("bench-%d-%d", gi, ci)})
 		if err != nil {
-			log.Printf("[client] %s conn#%d stream failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			conn.Close()
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, time.Since(connectStart).Milliseconds())
+		firstConnect := !stats[gi].conns[ci].firstMsg.Load()
+		if firstConnect {
+			log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, time.Since(connectStart).Milliseconds())
+		}
 		stats[gi].conns[ci].connActive.Store(true)
-		if stats[gi].conns[ci].reconnectCount.Load() > 0 || stats[gi].conns[ci].disconnectCount.Load() > 0 {
+		if !firstConnect {
 			stats[gi].conns[ci].reconnectCount.Add(1)
 			stats[gi].conns[ci].reconnectHist.RecordValue(time.Since(connectStart).Milliseconds() * 1000)
 		}
@@ -256,7 +254,6 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 				break
 			}
 			if err != nil {
-				log.Printf("[client] %s conn#%d recv error: %v, reconnecting...", groups[gi].Name, ci+1, err)
 				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				break
@@ -268,8 +265,6 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 
 			if !cs.firstMsg.Load() && batchLen > 0 {
 				cs.firstMsg.Store(true)
-				e := entries[0]
-				log.Printf("[client] %s conn#%d FIRST BATCH (%d msgs, ts=%d)", groups[gi].Name, ci+1, batchLen, e.GetTimestamp())
 			}
 
 			if !measuring.Load() {
@@ -322,7 +317,7 @@ func aggregateGroup(gs *GroupStats) (totalMsgs, totalBytes, totalRaw, totalRawBy
 }
 
 func printLiveStats(groups []Group, stats []*GroupStats, measuring *atomic.Bool) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		if !measuring.Load() {
