@@ -120,17 +120,33 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(msg))
 			}
 
-			localCount++
 			localBytes += int64(len(msg))
 
-			if measuring.Load() {
-				ts := extractTimestamp(msg)
-				if ts > 0 {
-					latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
-					if latencyMicros < 1 {
-						latencyMicros = 1
+			remaining := msg
+			for len(remaining) > 0 {
+				idx := bytes.IndexByte(remaining, '\n')
+				var line []byte
+				if idx >= 0 {
+					line = remaining[:idx]
+					remaining = remaining[idx+1:]
+				} else {
+					line = remaining
+					remaining = nil
+				}
+				if len(line) == 0 {
+					continue
+				}
+				localCount++
+
+				if measuring.Load() {
+					ts := extractTimestamp(line)
+					if ts > 0 {
+						latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
+						if latencyMicros < 1 {
+							latencyMicros = 1
+						}
+						stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 					}
-					stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 				}
 			}
 
