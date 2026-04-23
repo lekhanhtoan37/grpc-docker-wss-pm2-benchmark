@@ -45,6 +45,8 @@ producer.on("event.error", (err) => {
   console.error(`[producer] Error: ${err.message}`);
 });
 
+let lastLogTime = 0;
+
 function produceLoop() {
   const BATCH_SIZE = 200;
 
@@ -68,8 +70,10 @@ function produceLoop() {
     }
   }
 
-  if (messagesSent % 500000 === 0) {
-    const elapsed = (Date.now() - startTime) / 1000;
+  const now = Date.now();
+  if (now - lastLogTime >= 30000) {
+    lastLogTime = now;
+    const elapsed = (now - startTime) / 1000;
     const mbps = (bytesSent / 1024 / 1024 / elapsed).toFixed(1);
     const rate = (messagesSent / elapsed).toFixed(0);
     console.log(`[producer] ${messagesSent} msgs, ${mbps} MB/s (${rate} msg/s)`);
