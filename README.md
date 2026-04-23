@@ -1,192 +1,241 @@
-# WS vs gRPC Latency Benchmark
+# WebSocket vs gRPC Throughput Benchmark
 
-So sánh latency p50/p99 giữa 3 nhóm: PM2 WebSocket cluster (host), gRPC Docker containers (bridge network), và gRPC Docker containers (host network). Cả ba đều consume từ cùng một Kafka topic.
+So sánh throughput giữa **6 deployment modes**: WS (PM2 host), uWS (PM2 host, Docker bridge, Docker host), gRPC (Docker bridge, Docker host). Tất cả consume từ cùng một Kafka topic.
 
 ## Architecture
 
 ```
-                        HOST
-  ┌──────────────┐    ┌──────────────────────────┐
-  │ Kafka Producer│    │  Benchmark Client        │
-  │ 100 msg/s 1KB │    │  3 WS + 3 gRPC-bridge   │
-  └──────┬───────┘    │    + 3 gRPC-host          │
-         │            │  hdr-histogram            │
-         ▼            └──┬───┬──┬──┬──┬──┬──┬────┘
-   ┌───────────┐         │   │  │  │  │  │  │
-   │ Kafka     │         │   │  │  │  │  │  │
-   │ :9092     │         │   │  │  │  │  │  │
-   └─────┬─────┘         │   │  │  │  │  │  │
-         │               │   │  │  │  │  │  │
-  ┌──────┴──────┐       │   │  │  │  │  │  │
-  │ PM2 WS      │◄──────┘   │  │  │  │  │  │
-  │ 3 workers   │           │  │  │  │  │  │
-  │ :8080       │           │  │  │  │  │  │
-  └─────────────┘           │  │  │  │  │  │
-                            │  │  │  │  │  │
-  ┌──── Docker (bridge) ────┘  │  │  │  │  │
-  │  grpc-net + kafka-net      │  │  │  │  │
-  │  ┌─────┐ ┌─────┐ ┌─────┐ │  │  │  │  │
-  │  │ctr-1│ │ctr-2│ │ctr-3│ │  │  │  │  │
-  │  │:510 │ │:510 │ │:510 │ │  │  │  │  │
-  │  └──┬──┘ └──┬──┘ └──┬──┘ │  │  │  │  │
-  └─────┴───────┴───────┘    │  │  │  │  │
-       :50051 :50052 :50053 ◄─┘  │  │  │
-                               │  │  │
-  ┌──── Docker (host) ──────────┘  │  │
-  │  network_mode: host             │  │
-  │  ┌─────┐ ┌─────┐ ┌─────┐      │  │
-  │  │host1│ │host2│ │host3│      │  │
-  │  │60051│ │60052│ │60053│      │  │
-  │  └─────┘ └─────┘ └─────┘      │  │
-  └────────────────────────────────┘  │
-       :60051 :60052 :60053 ◄─────────┘
+                          SERVER (Ubuntu 24.04)
+  ┌─────────────────┐    ┌─────────────────────────────────────────────┐
+  │ Producer (x10)  │    │  Go Benchmark Client                        │
+  │ node-rdkafka    │    │  6 groups × 3 conns = 18 connections        │
+  │ ~1GB/s total    │    │  coder/websocket + grpc-go                  │
+  └────────┬────────┘    │  hdr-histogram latency per message          │
+           │             └──┬────┬────┬────┬────┬────┬────────────────┘
+           ▼                │    │    │    │    │    │
+    ┌─────────────┐        │    │    │    │    │    │
+    │ Kafka KRaft │        │    │    │    │    │    │
+    │ 192.168.0.9 │        │    │    │    │    │    │
+    │ :9091       │        │    │    │    │    │    │
+    │ 12 partitions       │    │    │    │    │    │
+    └──────┬──────┘        │    │    │    │    │    │
+           │               │    │    │    │    │    │
+    ┌──────┴──────────────────────────────────────────┐
+    │ Each server: unique Kafka consumer group         │
+    │ → receives ALL messages (independent consumers)  │
+    └──────┬──────────────────────────────────────────┘
+           │
+    ┌──────┴──────┐  ┌──────────────┐  ┌────────────────────────────┐
+    │ WS (PM2)    │  │ uWS (PM2)    │  │ uWS/gRPC (Docker)          │
+    │ 3 workers   │  │ 3 workers    │  │                            │
+    │ :8090       │  │ :8091        │  │ Bridge:                    │
+    └─────────────┘  └──────────────┘  │  nginx:50051→3 gRPC reps  │
+                                       │  nginx:50061→3 uWS reps   │
+                                       │ Host:                      │
+                                       │  60051-53 (gRPC)           │
+                                       │  60061-63 (uWS)            │
+                                       └────────────────────────────┘
+```
+
+## 6 Benchmark Groups
+
+| # | Group | Runtime | Network | Port | Load Balance |
+|---|-------|---------|---------|------|-------------|
+| 1 | WS (host/PM2) | PM2 cluster | Host | 8090 | Kernel TCP |
+| 2 | uWS (host/PM2) | PM2 cluster | Host | 8091 | Kernel TCP |
+| 3 | uWS bridge | Docker | Bridge + nginx | 50061 | nginx upstream |
+| 4 | uWS host | Docker | Host | 60061-63 | Direct |
+| 5 | gRPC bridge | Docker | Bridge + nginx | 50051 | nginx grpc_pass |
+| 6 | gRPC host | Docker | Host | 60051-53 | Direct |
+
+## Methodology
+
+### Message Format (Kafka → Server → Client)
+
+**Producer** gửi JSON messages vào Kafka topic `benchmark-messages`:
+
+```json
+{"timestamp": 1745312345678, "seq": 42, "data": "xxxxxxx..."}
+```
+
+- `timestamp`: Unix epoch milliseconds (Date.now())
+- `seq`: sequence number
+- `data`: padding để tổng message ≈ 1KB (1024 bytes)
+- 10 producer instances, each targeting ~1 GB/s → tổng ~10 GB/s
+- Using `node-rdkafka` (C bindings, `linger.ms=20`, `batch.size=262144`, `acks=0`)
+- Round-robin across 12 partitions (`seq % 12`)
+
+### Server-Side Batching (Micro-batching)
+
+Tất cả servers dùng cùng cơ chế batching:
+
+```
+Kafka batch → append to linger buffer → flush khi:
+  1. buffer ≥ BATCH_MAX (20 msgs), HOẶC
+  2. linger timer fires (5ms kể từ msg đầu tiên trong buffer)
+```
+
+**WS/uWS servers** gửi batch bằng cách join messages với `\n`:
+```
+msg1\nmsg2\nmsg3\n...msg20
+```
+→ 1 WebSocket frame = 20 messages joined by newline
+
+**gRPC server** gửi `StreamResponse` protobuf:
+```protobuf
+message StreamResponse {
+  repeated MessageEntry messages = 1;
+}
+```
+→ 1 gRPC stream message = array of 20 MessageEntry
+
+### Client-Side Decode
+
+**WS/uWS groups** (Go client using `coder/websocket`):
+1. Read WebSocket frame → `io.ReadAll(reader)`
+2. Split by `\n` → individual JSON strings
+3. Parse `timestamp` từ raw bytes (không json.Unmarshal toàn bộ):
+   ```go
+   // Scan for "timestamp:" key, extract number
+   idx := bytes.Index(msg, []byte(`"timestamp":`))
+   ```
+4. Latency = `time.Now().UnixMicro() - timestamp*1000`
+5. Record vào hdr-histogram
+
+**gRPC groups** (Go client using `grpc-go`):
+1. `stream.Recv()` → `StreamResponse`
+2. Iterate `resp.GetMessages()` → mỗi entry có `.Timestamp`, `.Seq`, `.Payload`
+3. Latency = `time.Now().UnixMicro() - timestamp*1000`
+4. Record vào hdr-histogram
+
+### Benchmark Protocol
+
+1. **Start**: Client connects 18 WebSocket/gRPC streams (3 per group)
+2. **Warmup**: 30 seconds — connections stabilize, consumer groups join
+3. **Measurement**: 120 seconds — count msgs, measure latency per message
+4. **Live stats**: Every 30s — print active connections, raw/processed counts
+5. **Report**: Throughput (MB/s, msg/s), Latency percentiles (p50→p99.9), Connection stability
+
+### Kafka Consumer Groups
+
+Mỗi server instance có unique consumer group → nhận TẤT CẢ messages từ topic:
+
+| Server | Group ID Pattern |
+|--------|-----------------|
+| WS worker 0/1/2 | `ws-benchmark-worker-{NODE_APP_INSTANCE}` |
+| uWS worker 0/1/2 | `uws-benchmark-worker-{NODE_APP_INSTANCE}` |
+| gRPC bridge-1/2/3 | `grpc-benchmark-{CONTAINER_ID}` |
+| gRPC host-1/2/3 | `grpc-benchmark-{CONTAINER_ID}` |
+| uWS bridge-1/2/3 | `uws-benchmark-worker-{CONTAINER_ID}` |
+| uWS host-1/2/3 | `uws-benchmark-worker-{CONTAINER_ID}` |
+
+→ 18 consumer groups đọc cùng 1 topic → mỗi group nhận tất cả messages.
+
+## Benchmark Results
+
+**Environment**: Ubuntu 24.04, 12-core, 32GB RAM, Kafka KRaft (1 broker), 10 producers × ~1 GB/s target, 12 partitions, 30s warmup + 120s measurement, 3 connections/group
+
+### Throughput
+
+```
+Group               Conns         Msgs       MB/s        msg/s
+------------------------------------------------------------
+WS (host/PM2)           3      5926832      48.75        49390
+uWS (host/PM2)          3      4166000      34.27        34717
+uWS bridge              3      3664000      30.14        30533
+uWS host                3      3599749      29.61        29998
+gRPC bridge             3     33590760     276.30       279923
+gRPC host               3     32823528     269.99       273529
+```
+
+### Raw Receive Stats
+
+```
+Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
+------------------------------------------------------------
+WS (host/PM2)       5926832      48.75        49390       0.0%
+uWS (host/PM2)      4166000      34.27        34717       0.0%
+uWS bridge          3664000      30.14        30533       0.0%
+uWS host            3599749      29.61        29998       0.0%
+gRPC bridge        33590760     276.30       279923       0.0%
+gRPC host          32823528     269.99       273529       0.0%
+```
+
+### Connection Stability
+
+```
+Group            Disconnects Reconnects   Reconn p50   Reconn p99   Reconn max
+----------------------------------------------------------------------------
+WS (host/PM2)             3          0        0.0ms        0.0ms        0.0ms
+uWS (host/PM2)            3          0        0.0ms        0.0ms        0.0ms
+uWS bridge                3          0        0.0ms        0.0ms        0.0ms
+uWS host                  3          0        0.0ms        0.0ms        0.0ms
+gRPC bridge               3          0        0.0ms        0.0ms        0.0ms
+gRPC host                 3          0        0.0ms        0.0ms        0.0ms
+```
+
+### Key Findings
+
+1. **gRPC dominates throughput**: ~276 MB/s (bridge) vs ~49 MB/s (WS) — **5.6x more throughput**
+2. **gRPC bridge ≈ gRPC host**: 276 vs 270 MB/s → Docker bridge + nginx overhead negligible at this scale
+3. **WS (ws library) > uWS** on host/PM2: 49 vs 34 MB/s → despite uWS being lower-level, the `ws` library handles backpressure better in this scenario
+4. **Zero drops across all groups**: 0% message loss — all protocols maintain reliable delivery
+5. **Zero reconnects**: All connections stable throughout measurement — no disconnect issues
+6. **uWS bridge ≈ uWS host**: 30 vs 30 MB/s → nginx adds minimal overhead for WebSocket proxying
+
+## Project Structure
+
+```
+├── grpc-server/
+│   ├── server.js               # gRPC Kafka→stream server, batch mode
+│   ├── Dockerfile               # Node 20 + gRPC deps
+│   ├── docker-compose.yml       # Bridge: 3 replicas + nginx (grpc_pass)
+│   ├── docker-compose.host.yml  # Host: 3 containers, ports 60051-53
+│   └── nginx.conf               # gRPC reverse proxy config
+├── uws-server/
+│   ├── server.js                # uWS Kafka→WS server, batch mode
+│   ├── Dockerfile               # Node 22 + uWebSockets.js native addon
+│   ├── docker-compose.yml       # Bridge: 3 replicas + nginx (WS proxy)
+│   ├── docker-compose.host.yml  # Host: 3 containers, ports 60061-63
+│   └── nginx.conf               # WebSocket reverse proxy config
+├── ws-server/
+│   ├── server.js                # WS (ws lib) Kafka→WS server, batch mode
+│   └── ecosystem.config.js      # PM2 cluster config, port 8090
+├── benchmark-client/
+│   └── go-client/
+│       ├── main.go              # Go benchmark client, 6 groups
+│       └── go.mod               # coder/websocket + grpc-go + hdr-histogram
+├── producer/
+│   └── producer-rdkafka.js      # node-rdkafka producer, ~1KB JSON msgs
+├── infra/
+│   └── server.properties        # Kafka KRaft config
+├── run-benchmark-1gb.sh         # Full orchestration script
+├── health-check-1gb.sh          # Pre-flight health check
+└── results/                     # Benchmark output logs
 ```
 
 ## Quick Start
 
 ```bash
-# Chạy full benchmark (tự động start Kafka, gRPC, WS, producer)
-./run-benchmark.sh
+# Full benchmark (auto: Kafka setup, Docker build, PM2 start, topic reset, producer, benchmark)
+sudo bash run-benchmark-1gb.sh
+
+# Custom params
+sudo WARMUP=60 DURATION=300 RUNS=1 CONNS=3 bash run-benchmark-1gb.sh
 ```
-
-Script tự động:
-1. Start Kafka + Zookeeper (Docker)
-2. Tạo topic `benchmark-messages` (1 partition)
-3. Start 3 gRPC containers (bridge network)
-4. Start 3 gRPC containers (host network)
-5. Start 3 PM2 WS workers (cluster mode)
-6. Health check tất cả endpoints
-7. Chạy 3 lần benchmark (60s warmup + 5min đo mỗi lần)
-8. Thu thập kết quả vào `results/`
-
-## Manual Step-by-Step
-
-```bash
-# 1. Start Kafka
-cd infra && docker compose up -d
-sleep 15
-docker exec benchmark-kafka kafka-topics --create \
-  --topic benchmark-messages --partitions 1 --replication-factor 1 \
-  --if-not-exists --bootstrap-server localhost:9092
-
-# 2. Start gRPC servers (bridge)
-cd grpc-server && docker compose up -d --build
-sleep 10
-
-# 2b. Start gRPC servers (host network)
-cd grpc-server && docker compose -f docker-compose.host.yml up -d --build
-sleep 5
-
-# 3. Start WS servers
-cd ws-server && npm install && pm2 start ecosystem.config.js
-sleep 5
-
-# 4. Start producer (background)
-cd producer && npm install && KAFKAJS_NO_PARTITIONER_WARNING=1 node producer.js &
-
-# 5. Run benchmark client
-cd benchmark-client && npm install
-node client.js --warmup 60 --duration 300
-
-# 6. Cleanup
-pm2 delete ws-benchmark
-cd ../grpc-server && docker compose -f docker-compose.host.yml down
-cd ../grpc-server && docker compose down
-cd ../infra && docker compose down
-```
-
-## Project Structure
-
-```
-├── infra/                   # Kafka + Zookeeper (Docker Compose)
-│   └── docker-compose.yml
-├── proto/                   # Shared gRPC proto
-│   └── benchmark.proto
-├── producer/                # Kafka producer (100 msg/s, 1KB JSON)
-│   ├── package.json
-│   └── producer.js
-├── ws-server/               # PM2 WebSocket cluster (3 workers)
-│   ├── package.json
-│   ├── server.js
-│   └── ecosystem.config.js
-├── grpc-server/             # gRPC Docker containers (3x bridge + 3x host)
-│   ├── package.json
-│   ├── server.js
-│   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── docker-compose.host.yml
-├── benchmark-client/        # Benchmark client (9 connections, hdr-histogram)
-│   ├── package.json
-│   ├── client.js
-│   └── proto/
-│       └── benchmark.proto
-├── results/                 # Benchmark output logs
-├── health-check.sh          # Verify all services running
-└── run-benchmark.sh         # One-command benchmark runner
-```
-
-## Approach
-
-**Approach B: Unique Consumer Groups** — Mỗi consumer (3 WS workers + 3 gRPC bridge + 3 gRPC host) dùng unique consumer group trên 1 partition Kafka. Mỗi consumer nhận tất cả messages. So sánh latency cho cùng một message giữa 3 nhóm.
-
-## Network Mode Comparison
-
-Benchmark so sánh 3 deployment modes:
-
-| Mode | Runtime | Network | Purpose |
-|------|---------|---------|---------|
-| WS (host/PM2) | PM2 cluster | Host | Baseline - no Docker overhead |
-| gRPC bridge | Docker | Bridge + port mapping | Standard Docker deployment |
-| gRPC host | Docker | Host (`network_mode: host`) | Zero Docker network overhead |
-
-### macOS Limitation
-
-Trên macOS Docker Desktop, `network_mode: host` chia sẻ Linux VM network, không phải macOS host network. VM boundary (~0.3-1ms overhead) che mất lợi ích của host networking. Để có kết quả chính xác cho production, chạy trên Linux.
-
-## Benchmark Results
-
-**Environment**: macOS, Docker Desktop, Node v22.13.0, 100 msg/s, ~1KB JSON, 60s warmup + 300s measurement
-
-```
-╔══════════╦══════════════╦══════════════╦════════════╗
-║ Pctl     ║ WS (ms)      ║ gRPC (ms)    ║ Delta (ms) ║
-╠══════════╬══════════════╬══════════════╬════════════╣
-║      p50 ║        0.001 ║        0.002 ║     +0.001 ║
-║      p75 ║        0.002 ║        0.003 ║     +0.001 ║
-║      p90 ║        0.003 ║        0.004 ║     +0.001 ║
-║      p95 ║        0.003 ║        0.004 ║     +0.001 ║
-║      p99 ║        0.005 ║        0.006 ║     +0.001 ║
-║    p99.9 ║        0.016 ║        0.016 ║     -0.000 ║
-╚══════════╩══════════════╩══════════════╩════════════╝
-
-Per-endpoint breakdown:
-  WS #1:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
-  WS #2:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
-  WS #3:    29624 msgs, p50=0.001 p75=0.002 p90=0.003 p95=0.003 p99=0.005 p99.9=0.016
-  gRPC #1:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.015
-  gRPC #2:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.016
-  gRPC #3:  29624 msgs, p50=0.002 p75=0.003 p90=0.004 p95=0.004 p99=0.006 p99.9=0.016
-
-Event loop lag: p50=0.00ms, p99=0.00ms, max=0.00ms
-Total messages: 177744
-```
-
-*(Kết quả cũ 2 nhóm. Chạy lại benchmark với `./run-benchmark.sh` để có kết quả 3 nhóm mới.)*
-
-**Key findings**:
-- gRPC (Docker bridge) chậm hơn WS (host) khoảng **+0.001ms** ở mọi percentile
-- gRPC (Docker host) kết quả phụ thuộc platform — trên macOS ≈ bridge do VM overhead
-- Ở p99.9, cả hai gần như bằng nhau (~0.016ms)
-- Docker bridge network overhead rất nhỏ ở workload thấp (100 msg/s, 1KB)
 
 ## Tech Stack
 
 | Component | Tech |
 |-----------|------|
-| WS server | `ws` ^8.x |
-| gRPC server | `@grpc/grpc-js` ^1.12 |
-| Kafka client | `kafkajs` ^2.x |
-| Histogram | `hdr-histogram-js` ^3.x |
-| Process manager | PM2 ^5.x |
+| WS server | `ws` ^8.x (PM2 cluster, 3 workers) |
+| uWS server | `uWebSockets.js` v20.49.0 (PM2 cluster + Docker) |
+| gRPC server | `@grpc/grpc-js` ^1.12 (Docker) |
+| Kafka client (server) | `kafkajs` ^2.x |
+| Kafka client (producer) | `node-rdkafka` (C bindings, zero-copy) |
+| Benchmark client | Go 1.22 + `coder/websocket` + `grpc-go` + `hdr-histogram` |
+| Reverse proxy | nginx:alpine (gRPC `grpc_pass` + WS `proxy_pass`) |
+| Kafka broker | Kafka 3.9.2 KRaft mode (no Zookeeper) |
+| Process manager | PM2 ^5.x (cluster mode) |
 | Containers | Docker Compose v2 |
-| Node.js | 20 LTS |
+| Runtime | Node 22 (uWS), Node 20 (gRPC) |
