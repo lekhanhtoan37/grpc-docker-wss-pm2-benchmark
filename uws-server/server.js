@@ -85,6 +85,11 @@ async function flushToClients() {
         warn(`[uws:${INSTANCE}] conn#${ws._connId} send DROPPED`);
         toDelete.push(ws);
         ws._alive = false;
+      } else if (sendStatus === 0) {
+        const buffered = ws.getBufferedAmount();
+        if (buffered > MAX_BACKPRESSURE * 0.8) {
+          warn(`[uws:${INSTANCE}] conn#${ws._connId} backpressure ${(buffered / 1024 / 1024).toFixed(1)}MB (${((buffered / MAX_BACKPRESSURE) * 100).toFixed(0)}%)`);
+        }
       }
     } catch {
       toDelete.push(ws);
@@ -174,15 +179,19 @@ const app = uWS
       ws._alive = true;
       log(`[uws:${INSTANCE}] conn#${ws._connId} connected (total: ${clients.size})`);
     },
-    close: (ws) => {
+    close: (ws, code, message) => {
       ws._alive = false;
       clients.delete(ws);
       try {
         const buffered = ws.getBufferedAmount();
-        log(`[uws:${INSTANCE}] conn#${ws._connId} closed, buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
+        log(`[uws:${INSTANCE}] conn#${ws._connId} closed code=${code} buffered=${(buffered / 1024 / 1024).toFixed(2)}MB (total: ${clients.size})`);
       } catch {
-        log(`[uws:${INSTANCE}] conn#${ws._connId} closed (total: ${clients.size})`);
+        log(`[uws:${INSTANCE}] conn#${ws._connId} closed code=${code} (total: ${clients.size})`);
       }
+    },
+    drain: (ws) => {
+      const buffered = ws.getBufferedAmount();
+      log(`[uws:${INSTANCE}] conn#${ws._connId} drain buffered=${(buffered / 1024 / 1024).toFixed(2)}MB`);
     },
     message: () => {},
   })
