@@ -31,13 +31,16 @@ type Group struct {
 }
 
 type ConnStats struct {
-	hist       *hdrhistogram.Histogram
-	count      atomic.Int64
-	bytes      atomic.Int64
-	rawCount   atomic.Int64
-	rawBytes   atomic.Int64
-	firstMsg   atomic.Bool
-	connActive atomic.Bool
+	hist              *hdrhistogram.Histogram
+	reconnectHist     *hdrhistogram.Histogram
+	count             atomic.Int64
+	bytes             atomic.Int64
+	rawCount          atomic.Int64
+	rawBytes          atomic.Int64
+	firstMsg          atomic.Bool
+	connActive        atomic.Bool
+	disconnectCount   atomic.Int64
+	reconnectCount    atomic.Int64
 }
 
 type GroupStats struct {
@@ -55,7 +58,8 @@ var groups = []Group{
 
 func newConnStats() *ConnStats {
 	return &ConnStats{
-		hist: hdrhistogram.New(1, 60000000, 3),
+		hist:          hdrhistogram.New(1, 60000000, 3),
+		reconnectHist: hdrhistogram.New(1, 30000000, 3),
 	}
 }
 
@@ -83,15 +87,21 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 			CompressionMode:     websocket.CompressionDisabled,
 			CompressionThreshold: 0,
 		}
+		connectStart := time.Now()
 		conn, _, err := websocket.Dial(ctx, endpoint, opts)
 		if err != nil {
 			log.Printf("[client] %s conn#%d connect failed: %v, retrying in 3s...", groups[gi].Name, ci+1, err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		connectMs := time.Since(connectStart).Milliseconds()
 
-		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
+		log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, connectMs)
 		stats[gi].conns[ci].connActive.Store(true)
+		if stats[gi].conns[ci].reconnectCount.Load() > 0 || stats[gi].conns[ci].disconnectCount.Load() > 0 {
+			stats[gi].conns[ci].reconnectCount.Add(1)
+			stats[gi].conns[ci].reconnectHist.RecordValue(connectMs * 1000)
+		}
 
 		var localCount, localBytes int64
 		lastFlush := time.Now()
@@ -99,6 +109,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		for {
 			_, reader, err := conn.Reader(ctx)
 			if err != nil {
+				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				stats[gi].conns[ci].count.Add(localCount)
 				stats[gi].conns[ci].bytes.Add(localBytes)
@@ -199,6 +210,7 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 		default:
 		}
 
+		connectStart := time.Now()
 		conn, err := grpc.NewClient(endpoint,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithInitialWindowSize(671088640),
@@ -223,19 +235,24 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			continue
 		}
 
-		log.Printf("[client] %s conn#%d connected to %s", groups[gi].Name, ci+1, endpoint)
+		log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, time.Since(connectStart).Milliseconds())
 		stats[gi].conns[ci].connActive.Store(true)
+		if stats[gi].conns[ci].reconnectCount.Load() > 0 || stats[gi].conns[ci].disconnectCount.Load() > 0 {
+			stats[gi].conns[ci].reconnectCount.Add(1)
+			stats[gi].conns[ci].reconnectHist.RecordValue(time.Since(connectStart).Milliseconds() * 1000)
+		}
 
 		for {
 			resp, err := stream.Recv()
 			if err == io.EOF {
-				log.Printf("[client] %s conn#%d stream EOF", groups[gi].Name, ci+1)
+				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				conn.Close()
 				break
 			}
 			if err != nil {
 				log.Printf("[client] %s conn#%d recv error: %v, reconnecting...", groups[gi].Name, ci+1, err)
+				stats[gi].conns[ci].disconnectCount.Add(1)
 				stats[gi].conns[ci].connActive.Store(false)
 				break
 			}
@@ -519,9 +536,38 @@ func main() {
 				dropPct := float64(raw-count) / float64(raw) * 100
 				extra = fmt.Sprintf(", raw=%d, drop=%.1f%%", raw, dropPct)
 			}
+			disc := cs.disconnectCount.Load()
+			reconn := cs.reconnectCount.Load()
+			extra += fmt.Sprintf(", disc=%d, reconn=%d", disc, reconn)
+			if reconn > 0 {
+				extra += fmt.Sprintf(", reconn_p50=%.1fms, reconn_p99=%.1fms",
+					float64(cs.reconnectHist.ValueAtPercentile(50))/1000.0,
+					float64(cs.reconnectHist.ValueAtPercentile(99))/1000.0)
+			}
 			fmt.Printf("  %s conn#%d (ep#%d %s) [%s][first=%s]: %d msgs, %.2f MB/s, p50=%.3f p99=%.3f%s\n",
 				groups[gi].Name, ci+1, epIdx+1, groups[gi].Endpoints[epIdx], status, first,
 				count, mbps, p50, p99, extra)
+		}
+	}
+
+	fmt.Println("\n=== CONNECTION STABILITY ===\n")
+	fmt.Printf("%-16s %10s %10s %12s %12s %12s\n", "Group", "Disconnects", "Reconnects", "Reconn p50", "Reconn p99", "Reconn max")
+	fmt.Println(strings.Repeat("-", 76))
+	for gi := range groups {
+		totalDisc, totalReconn := int64(0), int64(0)
+		mergedReconn := hdrhistogram.New(1, 30000000, 3)
+		for _, cs := range stats[gi].conns {
+			totalDisc += cs.disconnectCount.Load()
+			totalReconn += cs.reconnectCount.Load()
+			mergedReconn.Merge(cs.reconnectHist)
+		}
+		p50 := float64(mergedReconn.ValueAtPercentile(50)) / 1000.0
+		p99 := float64(mergedReconn.ValueAtPercentile(99)) / 1000.0
+		maxVal := float64(mergedReconn.Max()) / 1000.0
+		if totalDisc == 0 {
+			fmt.Printf("%-16s %10d %10d %12s %12s %12s\n", groups[gi].Name, totalDisc, totalReconn, "-", "-", "-")
+		} else {
+			fmt.Printf("%-16s %10d %10d %10.1fms %10.1fms %10.1fms\n", groups[gi].Name, totalDisc, totalReconn, p50, p99, maxVal)
 		}
 	}
 
