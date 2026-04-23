@@ -422,8 +422,8 @@ echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client"
 # ──────────────────────────────────────────────
 echo ""
 echo "--- Container Kafka consumer status ---"
-  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc-server" --format '{{.Names}}' | sort)
-  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-server" --format '{{.Names}}' | sort)
+  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
+  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
   for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
            $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
   CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -cE "Kafka consumer (connected|ready)" || true)
@@ -566,8 +566,8 @@ for run in $(seq 1 "$RUNS"); do
   start_producer
 
   echo "--- Server diagnostics (after producers started) ---"
-  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc-server" --format '{{.Names}}' | sort)
-  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-server" --format '{{.Names}}' | sort)
+  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
+  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
   for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
            $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
     echo "  === $c (last 10 lines) ==="
@@ -634,8 +634,8 @@ echo "--- Step 8: Collect system info ---"
   run_pm2 show uws-benchmark 2>/dev/null || true
   echo ""
   echo "=== Docker Stats ==="
-  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc-server" --format '{{.Names}}' | sort)
-  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-server" --format '{{.Names}}' | sort)
+  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
+  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
   docker stats --no-stream \
     $BRIDGE_GRPC_CONTAINERS \
     grpc-host-1 grpc-host-2 grpc-host-3 \

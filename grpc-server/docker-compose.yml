@@ -1,10 +1,43 @@
 services:
-  grpc-server:
+  grpc-1:
     build: .
-    ports:
-      - "50051:50051"
     environment:
+      CONTAINER_ID: "bridge-1"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
-    deploy:
-      replicas: 3
+    networks:
+      - backend
+
+  grpc-2:
+    build: .
+    environment:
+      CONTAINER_ID: "bridge-2"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+    networks:
+      - backend
+
+  grpc-3:
+    build: .
+    environment:
+      CONTAINER_ID: "bridge-3"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+    networks:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - grpc-1
+      - grpc-2
+      - grpc-3
+    networks:
+      - backend
+
+networks:
+  backend:

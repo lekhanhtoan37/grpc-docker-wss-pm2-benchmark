@@ -1,11 +1,46 @@
 services:
-  uws-server:
+  uws-1:
     build: .
-    ports:
-      - "50061:8091"
     environment:
+      CONTAINER_ID: "bridge-1"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
       PORT: "8091"
-    deploy:
-      replicas: 3
+    networks:
+      - backend
+
+  uws-2:
+    build: .
+    environment:
+      CONTAINER_ID: "bridge-2"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      PORT: "8091"
+    networks:
+      - backend
+
+  uws-3:
+    build: .
+    environment:
+      CONTAINER_ID: "bridge-3"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      PORT: "8091"
+    networks:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "50061:50061"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - uws-1
+      - uws-2
+      - uws-3
+    networks:
+      - backend
+
+networks:
+  backend:
