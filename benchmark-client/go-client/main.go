@@ -426,6 +426,10 @@ func main() {
 	cancel()
 	wg.Wait()
 
+	log.SetOutput(io.Discard)
+	time.Sleep(100 * time.Millisecond)
+	log.SetOutput(os.Stderr)
+
 	measureDuration := measureEnd.Sub(measureStart).Seconds()
 
 	fmt.Println("\n=== THROUGHPUT RESULTS (processed) ===\n")
