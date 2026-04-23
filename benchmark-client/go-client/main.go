@@ -72,8 +72,6 @@ func newGroupStats(conns int) *GroupStats {
 func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	readBuf := make([]byte, 256*1024)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,15 +108,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 				break
 			}
 
-			msgSize := int(reader.(*io.LimitedReader).N)
-			var msg []byte
-			if msgSize <= cap(readBuf) {
-				msg = readBuf[:msgSize]
-				_, err = io.ReadFull(reader, msg)
-			} else {
-				msg = make([]byte, msgSize)
-				_, err = io.ReadFull(reader, msg)
-			}
+			msg, err := io.ReadAll(reader)
 			if err != nil {
 				stats[gi].conns[ci].connActive.Store(false)
 				conn.Close(websocket.StatusInternalError, "read error")
@@ -127,11 +117,11 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 
 			if !stats[gi].conns[ci].firstMsg.Load() {
 				stats[gi].conns[ci].firstMsg.Store(true)
-				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, msgSize)
+				log.Printf("[client] %s conn#%d FIRST MSG (%d bytes)", groups[gi].Name, ci+1, len(msg))
 			}
 
 			localCount++
-			localBytes += int64(msgSize)
+			localBytes += int64(len(msg))
 
 			if measuring.Load() {
 				ts := extractTimestamp(msg)
