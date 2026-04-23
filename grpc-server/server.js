@@ -10,7 +10,7 @@ const GROUP_ID = `grpc-benchmark-${CONTAINER_ID}`;
 const PORT = parseInt(process.env.GRPC_PORT || "50051", 10);
 const HOST = process.env.GRPC_HOST || "0.0.0.0";
 const LINGER_MS = parseInt(process.env.LINGER_MS || "5", 10);
-const BATCH_MAX = parseInt(process.env.BATCH_MAX || "500", 10);
+const BATCH_MAX = parseInt(process.env.BATCH_MAX || "20", 10);
 
 const packageDef = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,

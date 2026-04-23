@@ -7,7 +7,7 @@ const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.env.CONTAINER_ID || process.env.HOSTNAME || process.pid;
 const GROUP_ID = `uws-benchmark-worker-${INSTANCE}`;
 const MAX_BACKPRESSURE = 256 * 1024 * 1024;
-const BATCH_MAX = parseInt(process.env.BATCH_MAX || "500", 10);
+const BATCH_MAX = parseInt(process.env.BATCH_MAX || "20", 10);
 const LINGER_MS = parseInt(process.env.LINGER_MS || "5", 10);
 
 const ts = () => new Date().toISOString();

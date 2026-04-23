@@ -7,7 +7,7 @@ const BROKER = process.env.KAFKA_BROKER || "192.168.0.9:9091";
 const TOPIC = process.env.KAFKA_TOPIC || "benchmark-messages";
 const INSTANCE = process.env.NODE_APP_INSTANCE || process.pid;
 const GROUP_ID = `ws-benchmark-worker-${INSTANCE}`;
-const BATCH_MAX = parseInt(process.env.BATCH_MAX || "500", 10);
+const BATCH_MAX = parseInt(process.env.BATCH_MAX || "20", 10);
 const LINGER_MS = parseInt(process.env.LINGER_MS || "5", 10);
 
 const clients = new Set();
