@@ -93,6 +93,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		conn.SetReadLimit(128 * 1024 * 1024)
 		connectMs := time.Since(connectStart).Milliseconds()
 
 		firstConnect := !stats[gi].conns[ci].firstMsg.Load()
