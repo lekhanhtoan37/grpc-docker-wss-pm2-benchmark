@@ -30,10 +30,10 @@ run_pm2() {
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 WARMUP="${WARMUP:-30}"
 DURATION="${DURATION:-120}"
-RUNS="${RUNS:-3}"
+RUNS="${RUNS:-1}"
 TARGET_MBPS="${TARGET_MBPS:-1000}"
 NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
-CONNS="${CONNS:-3}"
+SCENARIOS="${SCENARIOS:-3 30 90}"
 RESULTS_DIR="$BASEDIR/results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
@@ -557,56 +557,72 @@ cleanup() {
 trap cleanup EXIT
 
 echo ""
-echo "--- Step 7: Running $RUNS benchmark runs ---"
+echo "--- Step 7: Running benchmark scenarios: $SCENARIOS connections, $RUNS run(s) each ---"
 
-for run in $(seq 1 "$RUNS"); do
-  echo ""
-  echo "=== Run $run/$RUNS ($(date)) ==="
+SCENARIO_NUM=0
+TOTAL_SCENARIOS=$(echo $SCENARIOS | wc -w | tr -d ' ')
 
-  start_producer
+for CONNS in $SCENARIOS; do
+  SCENARIO_NUM=$((SCENARIO_NUM + 1))
+  for run in $(seq 1 "$RUNS"); do
+    echo ""
+    echo "================================================================"
+    echo "=== Scenario $SCENARIO_NUM/$TOTAL_SCENARIOS: ${CONNS} conns/group, Run $run/$RUNS ($(date)) ==="
+    echo "================================================================"
 
-  echo "--- Server diagnostics (after producers started) ---"
-  BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
-  BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
-  for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
-           $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
-    echo "  === $c (last 10 lines) ==="
-    docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
+    start_producer
+
+    echo "--- Server diagnostics (after producers started) ---"
+    BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
+    BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
+    for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
+             $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
+      echo "  === $c (last 10 lines) ==="
+      docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
+    done
+    echo "  === WS server (pm2 logs, last 10 lines) ==="
+    run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "  === uWS server (pm2 logs, last 10 lines) ==="
+    run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "--- End server diagnostics ---"
+
+    CLIENT_LOG="$RESULTS_DIR/client-conns${CONNS}-run${run}-${TIMESTAMP}.log"
+    "$BASEDIR/benchmark-client/go-client/benchmark-client" \
+      --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
+      2>&1 | tee "$CLIENT_LOG"
+    echo "Client log: $CLIENT_LOG"
+    echo ""
+
+    stop_producer
+
+    RESTART_NEEDED=false
+    if [ "$run" -lt "$RUNS" ]; then
+      RESTART_NEEDED=true
+    fi
+    if [ "$SCENARIO_NUM" -lt "$TOTAL_SCENARIOS" ]; then
+      RESTART_NEEDED=true
+    fi
+
+    if [ "$RESTART_NEEDED" = true ]; then
+      echo "Restarting Docker containers for next scenario..."
+      cd "$BASEDIR/grpc-server"
+      docker compose down 2>/dev/null || true
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      cd "$BASEDIR/uws-server"
+      docker compose down 2>/dev/null || true
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      sleep 2
+      cd "$BASEDIR/grpc-server"
+      docker compose up -d
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR/uws-server"
+      docker compose up -d
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR"
+      echo "Waiting 15s for containers + Kafka consumers..."
+      sleep 15
+    fi
   done
-  echo "  === WS server (pm2 logs, last 10 lines) ==="
-  run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
-  echo "  === uWS server (pm2 logs, last 10 lines) ==="
-  run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
-  echo "--- End server diagnostics ---"
-
-  CLIENT_LOG="$RESULTS_DIR/client-run-${run}-${TIMESTAMP}.log"
-  "$BASEDIR/benchmark-client/go-client/benchmark-client" \
-    --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
-    2>&1 | tee "$CLIENT_LOG"
-  echo "Client log: $CLIENT_LOG"
-  echo ""
-
-  stop_producer
-
-  if [ "$run" -lt "$RUNS" ]; then
-    echo "Restarting Docker containers for next run..."
-    cd "$BASEDIR/grpc-server"
-    docker compose down 2>/dev/null || true
-    docker compose -f docker-compose.host.yml down 2>/dev/null || true
-    cd "$BASEDIR/uws-server"
-    docker compose down 2>/dev/null || true
-    docker compose -f docker-compose.host.yml down 2>/dev/null || true
-    sleep 2
-    cd "$BASEDIR/grpc-server"
-    docker compose up -d
-    docker compose -f docker-compose.host.yml up -d
-    cd "$BASEDIR/uws-server"
-    docker compose up -d
-    docker compose -f docker-compose.host.yml up -d
-    cd "$BASEDIR"
-    echo "Waiting 15s for containers + Kafka consumers..."
-    sleep 15
-  fi
 done
 
 # ──────────────────────────────────────────────
