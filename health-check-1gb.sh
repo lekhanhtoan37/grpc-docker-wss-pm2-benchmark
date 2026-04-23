@@ -43,13 +43,20 @@ echo ""
 echo "--- Docker bridge → Kafka connectivity ---"
 HOST_IP=192.168.0.9
 check "iptables allow Docker→Kafka" "iptables -L INPUT -n | grep 9091"
-check "Bridge container → Kafka (${HOST_IP}:9091)" "docker exec grpc-server-1 node -e \"const net=require('net');const s=net.createConnection(9091,'${HOST_IP}',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
+BRIDGE_CONTAINER=$(docker ps --filter "name=grpc-server-grpc-1" --format '{{.Names}}' | head -1)
+if [ -n "$BRIDGE_CONTAINER" ]; then
+  check "Bridge container → Kafka (${HOST_IP}:9091)" "docker exec $BRIDGE_CONTAINER node -e \"const net=require('net');const s=net.createConnection(9091,'${HOST_IP}',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""
+else
+  echo "  SKIP Bridge container not found"
+fi
 
 echo ""
-echo "--- gRPC Servers (bridge) ---"
-for port in 50051 50052 50053; do
-  check "gRPC bridge :$port" "nc -z 127.0.0.1 $port"
-done
+echo "--- gRPC Servers (bridge via nginx) ---"
+check "gRPC bridge nginx :50051" "nc -z 127.0.0.1 50051"
+
+echo ""
+echo "--- uWS Servers (bridge via nginx) ---"
+check "uWS bridge nginx :50061" "nc -z 127.0.0.1 50061"
 
 echo ""
 echo "--- gRPC Host-Networked Servers ---"
@@ -58,11 +65,18 @@ for port in 60051 60052 60053; do
 done
 
 echo ""
-echo "--- PM2 WS ---"
-check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
+echo "--- uWS Host-Networked Servers ---"
+for port in 60061 60062 60063; do
+  check "uWS host :$port" "nc -z 127.0.0.1 $port"
+done
 
 echo ""
-echo "--- WS Connectivity ---"
+echo "--- PM2 WS/uWS ---"
+check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
+check "PM2 uws-benchmark" "run_as_user npx pm2 describe uws-benchmark"
+
+echo ""
+echo "--- WS/uWS Connectivity ---"
 if PATH="$RESOLVED_PATH" timeout 3 node -e "const net=require('net');const s=net.createConnection(8090,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
   echo "  PASS WS :8090"
   PASS=$((PASS + 1))
@@ -71,11 +85,23 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+if PATH="$RESOLVED_PATH" timeout 3 node -e "const net=require('net');const s=net.createConnection(8091,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
+  echo "  PASS uWS :8091"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL uWS :8091"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "--- Docker ---"
 check "Docker running" "docker info"
-check "grpc-server-1 container" "docker ps | grep grpc-server-1"
-check "grpc-host-1 container" "docker ps | grep grpc-host-1"
+check "gRPC bridge replicas" "docker ps | grep 'grpc-server-grpc-'"
+check "gRPC bridge nginx" "docker ps | grep 'grpc-server-nginx'"
+check "gRPC host containers" "docker ps | grep grpc-host-1"
+check "uWS bridge replicas" "docker ps | grep 'uws-server-uws-'"
+check "uWS bridge nginx" "docker ps | grep 'uws-server-nginx'"
+check "uWS host containers" "docker ps | grep uws-host-1"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
