@@ -17,11 +17,11 @@ import (
 	"syscall"
 	"time"
 
+	pb "benchmark-client/proto"
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/coder/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	pb "benchmark-client/proto"
 )
 
 type Group struct {
@@ -31,16 +31,16 @@ type Group struct {
 }
 
 type ConnStats struct {
-	hist              *hdrhistogram.Histogram
-	reconnectHist     *hdrhistogram.Histogram
-	count             atomic.Int64
-	bytes             atomic.Int64
-	rawCount          atomic.Int64
-	rawBytes          atomic.Int64
-	firstMsg          atomic.Bool
-	connActive        atomic.Bool
-	disconnectCount   atomic.Int64
-	reconnectCount    atomic.Int64
+	hist            *hdrhistogram.Histogram
+	reconnectHist   *hdrhistogram.Histogram
+	count           atomic.Int64
+	bytes           atomic.Int64
+	rawCount        atomic.Int64
+	rawBytes        atomic.Int64
+	firstMsg        atomic.Bool
+	connActive      atomic.Bool
+	disconnectCount atomic.Int64
+	reconnectCount  atomic.Int64
 }
 
 type GroupStats struct {
@@ -50,9 +50,9 @@ type GroupStats struct {
 var groups = []Group{
 	{Name: "WS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8090", "ws://127.0.0.1:8090", "ws://127.0.0.1:8090"}},
 	{Name: "uWS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8091", "ws://127.0.0.1:8091", "ws://127.0.0.1:8091"}},
-	{Name: "uWS bridge", Type: "ws", Endpoints: []string{"ws://127.0.0.1:50061", "ws://127.0.0.1:50062", "ws://127.0.0.1:50063"}},
+	{Name: "uWS bridge", Type: "ws", Endpoints: []string{"ws://127.0.0.1:50061", "ws://127.0.0.1:50061", "ws://127.0.0.1:50061"}},
 	{Name: "uWS host", Type: "ws", Endpoints: []string{"ws://127.0.0.1:60061", "ws://127.0.0.1:60062", "ws://127.0.0.1:60063"}},
-	{Name: "gRPC bridge", Type: "grpc", Endpoints: []string{"localhost:50051", "localhost:50052", "localhost:50053"}},
+	{Name: "gRPC bridge", Type: "grpc", Endpoints: []string{"localhost:50051", "localhost:50051", "localhost:50051"}},
 	{Name: "gRPC host", Type: "grpc", Endpoints: []string{"localhost:60051", "localhost:60052", "localhost:60053"}},
 }
 
@@ -84,7 +84,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 		}
 
 		opts := &websocket.DialOptions{
-			CompressionMode:     websocket.CompressionDisabled,
+			CompressionMode:      websocket.CompressionDisabled,
 			CompressionThreshold: 0,
 		}
 		connectStart := time.Now()

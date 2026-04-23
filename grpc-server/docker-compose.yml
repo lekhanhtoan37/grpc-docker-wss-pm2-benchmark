@@ -1,30 +1,10 @@
 services:
-  grpc-server-1:
+  grpc-server:
     build: .
-    container_name: grpc-server-1
-    environment:
-      CONTAINER_ID: "1"
-      KAFKA_BROKER: "192.168.0.9:9091"
-      KAFKA_TOPIC: "benchmark-messages"
     ports:
       - "50051:50051"
-
-  grpc-server-2:
-    build: .
-    container_name: grpc-server-2
     environment:
-      CONTAINER_ID: "2"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
-    ports:
-      - "50052:50051"
-
-  grpc-server-3:
-    build: .
-    container_name: grpc-server-3
-    environment:
-      CONTAINER_ID: "3"
-      KAFKA_BROKER: "192.168.0.9:9091"
-      KAFKA_TOPIC: "benchmark-messages"
-    ports:
-      - "50053:50051"
+    deploy:
+      replicas: 3
