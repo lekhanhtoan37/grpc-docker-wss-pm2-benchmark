@@ -5,8 +5,8 @@ go 1.22
 toolchain go1.22.0
 
 require (
-	github.com/gorilla/websocket v1.5.3
 	github.com/segmentio/kafka-go v0.4.47
+	nhooyr.io/websocket v1.8.10
 )
 
 require (

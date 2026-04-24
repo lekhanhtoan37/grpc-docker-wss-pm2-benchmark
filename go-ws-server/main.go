@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"nhooyr.io/websocket"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -27,14 +27,70 @@ var (
 	LINGER_MS = envInt("LINGER_MS", 5)
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin:     func(r *http.Request) bool { return true },
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+const MAX_BACKPRESSURE = 256 * 1024 * 1024
+
+type Client struct {
+	conn     *websocket.Conn
+	sendCh   chan []byte
+	buffered int64
+	alive    bool
+}
+
+func newClient(conn *websocket.Conn) *Client {
+	c := &Client{
+		conn:   conn,
+		sendCh: make(chan []byte, 2000),
+		alive:  true,
+	}
+	go c.writePump()
+	return c
+}
+
+func (c *Client) writePump() {
+	for msg := range c.sendCh {
+		atomic.AddInt64(&c.buffered, -int64(len(msg)))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := c.conn.Write(ctx, websocket.MessageText, msg)
+		cancel()
+		if err != nil {
+			c.alive = false
+			c.conn.Close(websocket.StatusInternalError, "write error")
+			return
+		}
+	}
+}
+
+func (c *Client) trySend(msg []byte) bool {
+	if !c.alive {
+		return false
+	}
+	msgSize := int64(len(msg))
+	newBuf := atomic.AddInt64(&c.buffered, msgSize)
+	if newBuf > MAX_BACKPRESSURE {
+		atomic.AddInt64(&c.buffered, -msgSize)
+		log.Printf("[go-ws:%s] conn send DROPPED (backpressure %.0fMB)", INSTANCE, float64(newBuf)/1024/1024)
+		return false
+	}
+	if newBuf > MAX_BACKPRESSURE*80/100 {
+		log.Printf("[go-ws:%s] conn backpressure %.1fMB (%.0f%%)", INSTANCE, float64(newBuf)/1024/1024, float64(newBuf)/float64(MAX_BACKPRESSURE)*100)
+	}
+	select {
+	case c.sendCh <- msg:
+		return true
+	default:
+		atomic.AddInt64(&c.buffered, -msgSize)
+		return false
+	}
+}
+
+func (c *Client) close() {
+	c.alive = false
+	close(c.sendCh)
+	c.conn.Close(1001, "server shutdown")
 }
 
 type Server struct {
-	clients    map[*websocket.Conn]bool
+	clients    map[*Client]bool
 	clientsMu  sync.RWMutex
 	buffer     []string
 	flushMu    sync.Mutex
@@ -65,20 +121,19 @@ func (s *Server) flushToClients() {
 
 	atomic.AddInt64(&s.flushes, 1)
 	atomic.AddInt64(&s.msgsOut, int64(len(entries)))
-	payload := strings.Join(entries, "\n")
-	data := []byte(payload)
+	payload := []byte(strings.Join(entries, "\n"))
 
 	s.clientsMu.Lock()
-	var dead []*websocket.Conn
-	for ws := range s.clients {
-		err := ws.WriteMessage(websocket.TextMessage, data)
-		if err != nil {
-			dead = append(dead, ws)
+	var dead []*Client
+	for c := range s.clients {
+		if !c.trySend(payload) {
+			dead = append(dead, c)
 		}
 	}
-	for _, ws := range dead {
-		delete(s.clients, ws)
-		ws.Close()
+	for _, c := range dead {
+		delete(s.clients, c)
+		c.close()
+		log.Printf("[go-ws:%s] conn closed (total: %d)", INSTANCE, len(s.clients))
 	}
 	s.clientsMu.Unlock()
 
@@ -110,24 +165,27 @@ func (s *Server) appendToBuffer(msg string) {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	ws, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		return
 	}
+	c := newClient(conn)
 	s.clientsMu.Lock()
-	s.clients[ws] = true
+	s.clients[c] = true
 	count := len(s.clients)
 	s.clientsMu.Unlock()
 	log.Printf("[go-ws:%s] conn connected (total: %d)", INSTANCE, count)
 
 	for {
-		_, _, err := ws.ReadMessage()
+		_, _, err := conn.Read(context.Background())
 		if err != nil {
 			s.clientsMu.Lock()
-			delete(s.clients, ws)
+			delete(s.clients, c)
 			count = len(s.clients)
 			s.clientsMu.Unlock()
-			ws.Close()
+			c.close()
 			log.Printf("[go-ws:%s] conn disconnected (total: %d)", INSTANCE, count)
 			break
 		}
@@ -196,7 +254,7 @@ func (s *Server) printStats() {
 
 func main() {
 	s := &Server{
-		clients:   make(map[*websocket.Conn]bool),
+		clients:   make(map[*Client]bool),
 		startTime: time.Now(),
 	}
 
@@ -206,13 +264,14 @@ func main() {
 	go s.startKafkaConsumer(ctx)
 	go s.printStats()
 
-	http.HandleFunc("/ws", s.handleWS)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 	})
 
-	server := &http.Server{Addr: ":" + PORT}
+	server := &http.Server{Addr: ":" + PORT, Handler: mux}
 
 	go func() {
 		log.Printf("[go-ws:%s] Listening on :%s", INSTANCE, PORT)
@@ -230,10 +289,8 @@ func main() {
 	s.flushToClients()
 
 	s.clientsMu.Lock()
-	for ws := range s.clients {
-		ws.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(1001, "server shutdown"))
-		ws.Close()
+	for c := range s.clients {
+		c.close()
 	}
 	s.clientsMu.Unlock()
 

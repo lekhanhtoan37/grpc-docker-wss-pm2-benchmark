@@ -46,4 +46,5 @@ Thumbs.db
 # Coverage
 coverage/
 .nyc_output/
-go-ws-server
+go-ws-server/go-ws-server
+benchmark-client/go-client/benchmark-client
