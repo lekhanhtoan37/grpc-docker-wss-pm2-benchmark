@@ -50,8 +50,11 @@ type GroupStats struct {
 var groups = []Group{
 	{Name: "WS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8090", "ws://127.0.0.1:8090", "ws://127.0.0.1:8090"}},
 	{Name: "uWS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8091", "ws://127.0.0.1:8091", "ws://127.0.0.1:8091"}},
+	{Name: "Go WS (host/PM2)", Type: "ws", Endpoints: []string{"ws://127.0.0.1:8092", "ws://127.0.0.1:8093", "ws://127.0.0.1:8094"}},
 	{Name: "uWS bridge", Type: "ws", Endpoints: []string{"ws://127.0.0.1:50061", "ws://127.0.0.1:50061", "ws://127.0.0.1:50061"}},
+	{Name: "Go WS bridge", Type: "ws", Endpoints: []string{"ws://127.0.0.1:50071", "ws://127.0.0.1:50071", "ws://127.0.0.1:50071"}},
 	{Name: "uWS host", Type: "ws", Endpoints: []string{"ws://127.0.0.1:60061", "ws://127.0.0.1:60062", "ws://127.0.0.1:60063"}},
+	{Name: "Go WS host", Type: "ws", Endpoints: []string{"ws://127.0.0.1:60071", "ws://127.0.0.1:60072", "ws://127.0.0.1:60073"}},
 	{Name: "gRPC bridge", Type: "grpc", Endpoints: []string{"localhost:50051", "localhost:50051", "localhost:50051"}},
 	{Name: "gRPC host", Type: "grpc", Endpoints: []string{"localhost:60051", "localhost:60052", "localhost:60053"}},
 }

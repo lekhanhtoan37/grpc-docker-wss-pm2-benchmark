@@ -59,6 +59,10 @@ echo "--- uWS Servers (bridge via nginx) ---"
 check "uWS bridge nginx :50061" "nc -z 127.0.0.1 50061"
 
 echo ""
+echo "--- Go WS Servers (bridge via nginx) ---"
+check "Go WS bridge nginx :50071" "nc -z 127.0.0.1 50071"
+
+echo ""
 echo "--- gRPC Host-Networked Servers ---"
 for port in 60051 60052 60053; do
   check "gRPC host :$port" "nc -z 127.0.0.1 $port"
@@ -71,12 +75,19 @@ for port in 60061 60062 60063; do
 done
 
 echo ""
-echo "--- PM2 WS/uWS ---"
-check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
-check "PM2 uws-benchmark" "run_as_user npx pm2 describe uws-benchmark"
+echo "--- Go WS Host-Networked Servers ---"
+for port in 60071 60072 60073; do
+  check "Go WS host :$port" "nc -z 127.0.0.1 $port"
+done
 
 echo ""
-echo "--- WS/uWS Connectivity ---"
+echo "--- PM2 WS/uWS/Go WS ---"
+check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
+check "PM2 uws-benchmark" "run_as_user npx pm2 describe uws-benchmark"
+check "PM2 go-ws-benchmark" "run_as_user npx pm2 describe go-ws-benchmark"
+
+echo ""
+echo "--- WS/uWS/Go WS Connectivity ---"
 if PATH="$RESOLVED_PATH" timeout 3 node -e "const net=require('net');const s=net.createConnection(8090,'127.0.0.1',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" &>/dev/null; then
   echo "  PASS WS :8090"
   PASS=$((PASS + 1))
@@ -102,6 +113,9 @@ check "gRPC host containers" "docker ps | grep grpc-host-1"
 check "uWS bridge replicas" "docker ps | grep 'uws-server-uws-'"
 check "uWS bridge nginx" "docker ps | grep 'uws-server-nginx'"
 check "uWS host containers" "docker ps | grep uws-host-1"
+check "Go WS bridge replicas" "docker ps | grep 'go-ws-server-go-ws-'"
+check "Go WS bridge nginx" "docker ps | grep 'go-ws-server-nginx'"
+check "Go WS host containers" "docker ps | grep go-ws-host-1"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -397,6 +397,34 @@ cd "$BASEDIR"
 echo "Waiting 5s for uWS workers..."
 sleep 5
 
+echo ""
+echo "--- Step 4e: Build + start Go WS servers (Docker) ---"
+cd "$BASEDIR/go-ws-server"
+docker compose down 2>/dev/null || true
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
+docker compose build --no-cache
+docker compose -f docker-compose.host.yml build --no-cache
+docker compose up -d
+cd "$BASEDIR"
+echo "Waiting 10s for Go WS bridge containers..."
+sleep 10
+
+cd "$BASEDIR/go-ws-server"
+docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "Waiting 5s for Go WS host containers..."
+sleep 5
+
+echo ""
+echo "--- Step 4f: Start Go WS servers (PM2) ---"
+cd "$BASEDIR/go-ws-server"
+PATH="$RESOLVED_PATH" go build -o go-ws-server .
+run_pm2 describe go-ws-benchmark &>/dev/null && run_pm2 delete go-ws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for Go WS workers..."
+sleep 5
+
 # ──────────────────────────────────────────────
 # Step 5: Health check
 # ──────────────────────────────────────────────
@@ -416,6 +444,9 @@ PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found. I
 echo "Building Go benchmark client..."
 (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
 echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
+
+echo "Building Go WS server binary..."
+(cd "$BASEDIR/go-ws-server" && PATH="$RESOLVED_PATH" go build -o go-ws-server .)
 
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness
@@ -471,16 +502,19 @@ echo "--- Resetting topic (stop consumers first) ---"
 echo "  Stopping PM2 apps..."
 run_pm2 stop ws-benchmark 2>/dev/null || true
 run_pm2 stop uws-benchmark 2>/dev/null || true
+run_pm2 stop go-ws-benchmark 2>/dev/null || true
 echo "  Stopping Docker containers..."
 cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
 cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
 cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
 cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+cd "$BASEDIR/go-ws-server" && docker compose down 2>/dev/null || true
+cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
 cd "$BASEDIR"
 sleep 3
 
 echo "  Deleting consumer groups..."
-CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark" || true)
+CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark|go-ws-benchmark" || true)
 for cg in $CONSUMER_GROUPS; do
   "${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --delete --group "$cg" 2>/dev/null || true
 done
@@ -501,12 +535,16 @@ cd "$BASEDIR/ws-server"
 run_pm2 start ecosystem.config.js
 cd "$BASEDIR/uws-server"
 run_pm2 start ecosystem.config.js
+cd "$BASEDIR/go-ws-server"
+run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "  Restarting Docker containers..."
 cd "$BASEDIR/grpc-server" && docker compose up -d
 cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml up -d
 cd "$BASEDIR/uws-server" && docker compose up -d
 cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR/go-ws-server" && docker compose up -d
+cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml up -d
 cd "$BASEDIR"
 echo "  Waiting 10s for consumers to rejoin..."
 sleep 10
@@ -575,8 +613,10 @@ for CONNS in $SCENARIOS; do
     echo "--- Server diagnostics (after producers started) ---"
     BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
     BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
+    BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
     for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
-             $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
+             $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3 \
+             $BRIDGE_GOWS_CONTAINERS go-ws-host-1 go-ws-host-2 go-ws-host-3; do
       echo "  === $c (last 10 lines) ==="
       docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
     done
@@ -584,6 +624,8 @@ for CONNS in $SCENARIOS; do
     run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
     echo "  === uWS server (pm2 logs, last 10 lines) ==="
     run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "  === Go WS server (pm2 logs, last 10 lines) ==="
+    run_pm2 logs go-ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
     echo "--- End server diagnostics ---"
 
     CLIENT_LOG="$RESULTS_DIR/client-conns${CONNS}-run${run}-${TIMESTAMP}.log"
@@ -611,11 +653,17 @@ for CONNS in $SCENARIOS; do
       cd "$BASEDIR/uws-server"
       docker compose down 2>/dev/null || true
       docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      cd "$BASEDIR/go-ws-server"
+      docker compose down 2>/dev/null || true
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
       sleep 2
       cd "$BASEDIR/grpc-server"
       docker compose up -d
       docker compose -f docker-compose.host.yml up -d
       cd "$BASEDIR/uws-server"
+      docker compose up -d
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR/go-ws-server"
       docker compose up -d
       docker compose -f docker-compose.host.yml up -d
       cd "$BASEDIR"
