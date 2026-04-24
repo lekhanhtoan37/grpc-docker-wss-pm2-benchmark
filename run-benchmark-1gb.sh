@@ -418,12 +418,22 @@ sleep 5
 echo ""
 echo "--- Step 4f: Start Go WS servers (PM2) ---"
 cd "$BASEDIR/go-ws-server"
+PATH="$RESOLVED_PATH" go mod tidy
 PATH="$RESOLVED_PATH" go build -o go-ws-server .
+echo "Go WS binary: $(ls -lh go-ws-server | awk '{print $5, $6, $7, $8}')"
 run_pm2 describe go-ws-benchmark &>/dev/null && run_pm2 delete go-ws-benchmark 2>/dev/null || true
 run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "Waiting 5s for Go WS workers..."
 sleep 5
+echo "Verifying Go WS ports..."
+for port in 8092 8093 8094; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
 
 # ──────────────────────────────────────────────
 # Step 5: Health check
@@ -444,9 +454,6 @@ PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found. I
 echo "Building Go benchmark client..."
 (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
 echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
-
-echo "Building Go WS server binary..."
-(cd "$BASEDIR/go-ws-server" && PATH="$RESOLVED_PATH" go build -o go-ws-server .)
 
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness

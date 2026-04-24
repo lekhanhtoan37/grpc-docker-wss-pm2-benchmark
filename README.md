@@ -224,6 +224,57 @@ gRPC bridge      -39.0%
 gRPC host        -18.0%
 ```
 
+#### Run 2: 90 Connections/Group (540 total)
+
+**Throughput**
+
+```
+Group               Conns         Msgs       MB/s        msg/s
+------------------------------------------------------------
+WS (host/PM2)          90     75952988     625.26       632847
+uWS (host/PM2)         90     71802334     591.09       598263
+uWS bridge             90     78176583     643.56       651374
+uWS host               90     71909856     591.97       599159
+gRPC bridge            90     36632558     301.27       305226
+gRPC host              90     53054017     436.33       442051
+```
+
+**Raw Receive Stats**
+
+```
+Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
+------------------------------------------------------------
+WS (host/PM2)      75952988     625.26       632847       0.0%
+uWS (host/PM2)     71802334     591.09       598263       0.0%
+uWS bridge         78176583     643.56       651374       0.0%
+uWS host           71909856     591.97       599159       0.0%
+gRPC bridge        36632558     301.27       305226       0.0%
+gRPC host          53054017     436.33       442051       0.0%
+```
+
+**vs WS Throughput**
+
+```
+uWS (host/PM2)    -5.5%
+uWS bridge        +2.9%
+uWS host          -5.3%
+gRPC bridge      -51.8%
+gRPC host        -30.2%
+```
+
+**Connection Stability**
+
+```
+Group            Disconnects Reconnects   Reconn p50   Reconn p99   Reconn max
+----------------------------------------------------------------------------
+WS (host/PM2)           173          0        0.0ms        0.0ms        0.0ms
+uWS (host/PM2)           90          0        0.0ms        0.0ms        0.0ms
+uWS bridge               98          0        0.0ms        0.0ms        0.0ms
+uWS host                 90          0        0.0ms        0.0ms        0.0ms
+gRPC bridge              97          7       58.0ms     2302.0ms     2302.0ms
+gRPC host                90          0        0.0ms        0.0ms        0.0ms
+```
+
 ### Key Findings
 
 #### Low Concurrency (3 conns/group)

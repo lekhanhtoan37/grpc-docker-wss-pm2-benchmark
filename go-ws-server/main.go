@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,14 +19,23 @@ import (
 )
 
 var (
-	PORT      = envStr("PORT", "8092")
+	BASE_PORT = envInt("PORT", 8092)
 	BROKER    = envStr("KAFKA_BROKER", "192.168.0.9:9091")
 	TOPIC     = envStr("KAFKA_TOPIC", "benchmark-messages")
 	INSTANCE  = envStr("NODE_APP_INSTANCE", envStr("CONTAINER_ID", envStr("HOSTNAME", strconv.Itoa(os.Getpid()))))
+	PORT      = calcPort(BASE_PORT, INSTANCE)
 	GROUP_ID  = "go-ws-benchmark-worker-" + INSTANCE
 	BATCH_MAX = envInt("BATCH_MAX", 20)
 	LINGER_MS = envInt("LINGER_MS", 5)
 )
+
+func calcPort(base int, instance string) int {
+	idx, err := strconv.Atoi(instance)
+	if err != nil {
+		return base
+	}
+	return base + idx
+}
 
 const MAX_BACKPRESSURE = 256 * 1024 * 1024
 
@@ -54,7 +64,7 @@ func (c *Client) writePump() {
 		cancel()
 		if err != nil {
 			c.alive = false
-			c.conn.Close(websocket.StatusInternalError, "write error")
+			c.conn.Close(1001, "write error")
 			return
 		}
 	}
@@ -265,18 +275,24 @@ func main() {
 	go s.printStats()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("/", s.handleWS)
 
-	server := &http.Server{Addr: ":" + PORT, Handler: mux}
+	server := &http.Server{Handler: mux}
+
+	addr := ":" + strconv.Itoa(PORT)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("[go-ws:%s] Listen on %s failed: %v", INSTANCE, addr, err)
+	}
 
 	go func() {
-		log.Printf("[go-ws:%s] Listening on :%s", INSTANCE, PORT)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[go-ws:%s] Listen failed: %v", INSTANCE, err)
+		log.Printf("[go-ws:%s] Listening on %s", INSTANCE, addr)
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("[go-ws:%s] Serve failed: %v", INSTANCE, err)
 		}
 	}()
 
