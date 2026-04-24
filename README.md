@@ -133,9 +133,11 @@ Mỗi server instance có unique consumer group → nhận TẤT CẢ messages t
 
 ## Benchmark Results
 
-**Environment**: Ubuntu 24.04, 12-core, 32GB RAM, Kafka KRaft (1 broker), 10 producers × ~1 GB/s target, 12 partitions, 30s warmup + 120s measurement, 3 connections/group
+**Environment**: Ubuntu 24.04, 12-core, 32GB RAM, Kafka KRaft (1 broker), 10 producers × ~1 GB/s target, 12 partitions, 30s warmup + 120s measurement
 
-### Throughput
+### Scenario 1: 3 Connections/Group (18 total)
+
+#### Throughput
 
 ```
 Group               Conns         Msgs       MB/s        msg/s
@@ -148,7 +150,7 @@ gRPC bridge             3     33590760     276.30       279923
 gRPC host               3     32823528     269.99       273529
 ```
 
-### Raw Receive Stats
+#### Raw Receive Stats
 
 ```
 Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
@@ -161,7 +163,17 @@ gRPC bridge        33590760     276.30       279923       0.0%
 gRPC host          32823528     269.99       273529       0.0%
 ```
 
-### Connection Stability
+#### vs WS Throughput
+
+```
+uWS (host/PM2)   -29.7%
+uWS bridge       -38.2%
+uWS host         -39.3%
+gRPC bridge      +466.8%
+gRPC host        +453.8%
+```
+
+#### Connection Stability
 
 ```
 Group            Disconnects Reconnects   Reconn p50   Reconn p99   Reconn max
@@ -174,14 +186,70 @@ gRPC bridge               3          0        0.0ms        0.0ms        0.0ms
 gRPC host                 3          0        0.0ms        0.0ms        0.0ms
 ```
 
+### Scenario 2: 90 Connections/Group (540 total)
+
+#### Throughput
+
+```
+Group               Conns         Msgs       MB/s        msg/s
+------------------------------------------------------------
+WS (host/PM2)          90     66338667     545.81       552437
+uWS (host/PM2)         90     64789091     533.06       539532
+uWS bridge             90     73890399     607.94       615324
+uWS host               90     65388333     537.99       544523
+gRPC bridge            90     40517063     333.04       337407
+gRPC host              90     54442342     447.50       453370
+```
+
+#### Raw Receive Stats
+
+```
+Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
+------------------------------------------------------------
+WS (host/PM2)      66338667     545.81       552437       0.0%
+uWS (host/PM2)     64789091     533.06       539532       0.0%
+uWS bridge         73890399     607.94       615324       0.0%
+uWS host           65388333     537.99       544523       0.0%
+gRPC bridge        40517063     333.04       337407       0.0%
+gRPC host          54442342     447.50       453370       0.0%
+```
+
+#### vs WS Throughput
+
+```
+uWS (host/PM2)    -2.3%
+uWS bridge       +11.4%
+uWS host          -1.4%
+gRPC bridge      -39.0%
+gRPC host        -18.0%
+```
+
 ### Key Findings
 
+#### Low Concurrency (3 conns/group)
+
 1. **gRPC dominates throughput**: ~276 MB/s (bridge) vs ~49 MB/s (WS) — **5.6x more throughput**
-2. **gRPC bridge ≈ gRPC host**: 276 vs 270 MB/s → Docker bridge + nginx overhead negligible at this scale
-3. **WS (ws library) > uWS** on host/PM2: 49 vs 34 MB/s → despite uWS being lower-level, the `ws` library handles backpressure better in this scenario
-4. **Zero drops across all groups**: 0% message loss — all protocols maintain reliable delivery
-5. **Zero reconnects**: All connections stable throughout measurement — no disconnect issues
-6. **uWS bridge ≈ uWS host**: 30 vs 30 MB/s → nginx adds minimal overhead for WebSocket proxying
+2. **gRPC bridge ≈ gRPC host**: 276 vs 270 MB/s → Docker bridge + nginx overhead negligible
+3. **WS (ws library) > uWS** on host/PM2: 49 vs 34 MB/s
+4. **Zero drops across all groups**: 0% message loss
+5. **Zero reconnects**: All connections stable throughout measurement
+6. **uWS bridge ≈ uWS host**: 30 vs 30 MB/s → nginx adds minimal overhead
+
+#### High Concurrency (90 conns/group) — Game Changer
+
+1. **uWS bridge wins**: 608 MB/s — highest throughput across all groups (+11.4% vs WS)
+2. **WS/uWS throughput scales linearly**: 3 conns → ~49 MB/s, 90 conns → ~546 MB/s (~11x with 30x connections)
+3. **gRPC throughput does NOT scale**: 3 conns → ~276 MB/s, 90 conns → ~333-447 MB/s (only 1.2-1.6x)
+4. **gRPC slower than WS/uWS at high concurrency**: gRPC bridge -39%, gRPC host -18% vs WS
+5. **Zero drops at 540 connections**: All protocols maintain 0% message loss even at scale
+6. **BATCH_MAX=20**: Smaller batches favor WS/uWS fan-out pattern (1 Kafka msg → N connections)
+
+#### Why gRPC Doesn't Scale Like WS
+
+- gRPC uses **server-side streaming** (1 stream per client, server pushes batches) → serialization bottleneck
+- WS/uWS use **broadcast fan-out** (each Kafka batch → send to all connections) → naturally parallelizable
+- At 90 connections, gRPC must serialize/push to 90 streams per batch; WS/uWS can batch-send to all sockets efficiently
+- gRPC's HTTP/2 framing overhead grows with connection count; WebSocket is lighter per-connection
 
 ## Project Structure
 
