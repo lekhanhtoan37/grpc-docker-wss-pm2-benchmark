@@ -58,7 +58,7 @@ var groups = []Group{
 
 func newConnStats() *ConnStats {
 	return &ConnStats{
-		hist:          hdrhistogram.New(1, 60000000, 3),
+		hist:          hdrhistogram.New(1, 3600000000, 3),
 		reconnectHist: hdrhistogram.New(1, 30000000, 3),
 	}
 }
@@ -156,10 +156,9 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 					ts := extractTimestamp(line)
 					if ts > 0 {
 						latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
-						if latencyMicros < 1 {
-							latencyMicros = 1
+						if latencyMicros > 0 && latencyMicros < 3600000000 {
+							stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 						}
-						stats[gi].conns[ci].hist.RecordValue(latencyMicros)
 					}
 				}
 			}
@@ -285,12 +284,14 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 			nowMicros := time.Now().UnixMicro()
 			for _, e := range entries {
 				ts := e.GetTimestamp()
+				if ts == 0 {
+					continue
+				}
 				tsMicros := int64(ts * 1000)
 				latencyMicros := nowMicros - tsMicros
-				if latencyMicros < 1 {
-					latencyMicros = 1
+				if latencyMicros > 0 && latencyMicros < 3600000000 {
+					cs.hist.RecordValue(latencyMicros)
 				}
-				cs.hist.RecordValue(latencyMicros)
 			}
 		}
 
@@ -300,7 +301,7 @@ func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*Grou
 }
 
 func mergeGroupHistogram(gs *GroupStats) *hdrhistogram.Histogram {
-	merged := hdrhistogram.New(1, 60000000, 3)
+	merged := hdrhistogram.New(1, 3600000000, 3)
 	for _, cs := range gs.conns {
 		merged.Merge(cs.hist)
 	}
