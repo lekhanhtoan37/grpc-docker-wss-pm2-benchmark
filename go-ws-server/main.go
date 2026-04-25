@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"nhooyr.io/websocket"
-	"github.com/segmentio/kafka-go"
+	"github.com/IBM/sarama"
 )
 
 var (
@@ -49,7 +49,7 @@ type Client struct {
 func newClient(conn *websocket.Conn) *Client {
 	c := &Client{
 		conn:   conn,
-		sendCh: make(chan []byte, 2000),
+		sendCh: make(chan []byte, 4000),
 		alive:  true,
 	}
 	go c.writePump()
@@ -78,11 +78,7 @@ func (c *Client) trySend(msg []byte) bool {
 	newBuf := atomic.AddInt64(&c.buffered, msgSize)
 	if newBuf > MAX_BACKPRESSURE {
 		atomic.AddInt64(&c.buffered, -msgSize)
-		log.Printf("[go-ws:%s] conn send DROPPED (backpressure %.0fMB)", INSTANCE, float64(newBuf)/1024/1024)
 		return false
-	}
-	if newBuf > MAX_BACKPRESSURE*80/100 {
-		log.Printf("[go-ws:%s] conn backpressure %.1fMB (%.0f%%)", INSTANCE, float64(newBuf)/1024/1024, float64(newBuf)/float64(MAX_BACKPRESSURE)*100)
 	}
 	select {
 	case c.sendCh <- msg:
@@ -154,18 +150,27 @@ func (s *Server) flushToClients() {
 	s.flushMu.Unlock()
 }
 
-func (s *Server) appendToBuffer(msg string) {
+func (s *Server) appendBatch(entries []string) {
 	s.flushMu.Lock()
-	s.buffer = append(s.buffer, msg)
-	atomic.AddInt64(&s.msgsIn, 1)
+	atomic.AddInt64(&s.msgsIn, int64(len(entries)))
 	atomic.AddInt64(&s.batchCount, 1)
 
-	if len(s.buffer) >= BATCH_MAX {
-		s.flushMu.Unlock()
-		s.flushToClients()
-		return
+	for len(entries) > 0 {
+		space := BATCH_MAX - len(s.buffer)
+		if space <= 0 {
+			s.flushMu.Unlock()
+			s.flushToClients()
+			s.flushMu.Lock()
+			continue
+		}
+		if space > len(entries) {
+			space = len(entries)
+		}
+		s.buffer = append(s.buffer, entries[:space]...)
+		entries = entries[space:]
 	}
-	if s.timer == nil && !s.flushing {
+
+	if len(s.buffer) > 0 && s.timer == nil && !s.flushing {
 		s.timer = time.AfterFunc(time.Duration(LINGER_MS)*time.Millisecond, func() {
 			s.flushMu.Lock()
 			s.timer = nil
@@ -204,18 +209,51 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type consumerHandler struct {
+	server *Server
+	ctx    context.Context
+}
+
+func (h *consumerHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
+func (h *consumerHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
+func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for {
+		select {
+		case <-h.ctx.Done():
+			return nil
+		case msg, ok := <-claim.Messages():
+			if !ok {
+				return nil
+			}
+			if h.server.shutdown.Load() {
+				return nil
+			}
+			h.server.appendBatch([]string{string(msg.Value)})
+			session.MarkMessage(msg, "")
+		}
+	}
+}
+
 func (s *Server) startKafkaConsumer(ctx context.Context) {
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:          []string{BROKER},
-		Topic:            TOPIC,
-		GroupID:          GROUP_ID,
-		MinBytes:         1,
-		MaxBytes:         50 * 1024 * 1024,
-		MaxWait:          500 * time.Millisecond,
-		SessionTimeout:   30 * time.Second,
-		RebalanceTimeout: 30 * time.Second,
-	})
-	defer r.Close()
+	config := sarama.NewConfig()
+	config.ClientID = "go-ws-" + INSTANCE
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
+	config.Consumer.MaxProcessingTime = 500 * time.Millisecond
+	config.Consumer.Fetch.Max = 50 * 1024 * 1024
+	config.Consumer.Fetch.Min = 1
+	config.Consumer.Fetch.Default = 1024 * 1024
+	config.Consumer.MaxWaitTime = 500 * time.Millisecond
+	config.Consumer.Group.Session.Timeout = 30 * time.Second
+	config.Consumer.Group.Rebalance.Timeout = 30 * time.Second
+	config.ChannelBufferSize = 10000
+
+	group, err := sarama.NewConsumerGroup([]string{BROKER}, GROUP_ID, config)
+	if err != nil {
+		log.Fatalf("[go-ws:%s] Kafka consumer group error: %v", INSTANCE, err)
+	}
+	defer group.Close()
+
+	handler := &consumerHandler{server: s, ctx: ctx}
 
 	log.Printf("[go-ws:%s] Kafka consumer connected (group: %s)", INSTANCE, GROUP_ID)
 
@@ -225,19 +263,13 @@ func (s *Server) startKafkaConsumer(ctx context.Context) {
 			return
 		default:
 		}
-		m, err := r.ReadMessage(ctx)
-		if err != nil {
+		if err := group.Consume(ctx, []string{TOPIC}, handler); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("[go-ws:%s] Kafka read error: %v, retrying...", INSTANCE, err)
+			log.Printf("[go-ws:%s] Kafka consume error: %v, retrying...", INSTANCE, err)
 			time.Sleep(5 * time.Second)
-			continue
 		}
-		if s.shutdown.Load() {
-			return
-		}
-		s.appendToBuffer(string(m.Value))
 	}
 }
 
