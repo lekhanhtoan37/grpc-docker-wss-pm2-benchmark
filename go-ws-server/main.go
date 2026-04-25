@@ -59,9 +59,7 @@ func newClient(conn *websocket.Conn) *Client {
 func (c *Client) writePump() {
 	for msg := range c.sendCh {
 		atomic.AddInt64(&c.buffered, -int64(len(msg)))
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := c.conn.Write(ctx, websocket.MessageText, msg)
-		cancel()
+		err := c.conn.Write(context.Background(), websocket.MessageText, msg)
 		if err != nil {
 			c.alive = false
 			c.conn.Close(1001, "write error")
@@ -217,19 +215,69 @@ type consumerHandler struct {
 func (h *consumerHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
 func (h *consumerHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	const batchSize = 1024
+	batch := make([]string, 0, batchSize)
+	lastMsg := (*sarama.ConsumerMessage)(nil)
+
 	for {
 		select {
 		case <-h.ctx.Done():
+			if len(batch) > 0 {
+				h.server.appendBatch(batch)
+				if lastMsg != nil {
+					session.MarkMessage(lastMsg, "")
+				}
+			}
 			return nil
 		case msg, ok := <-claim.Messages():
 			if !ok {
+				if len(batch) > 0 {
+					h.server.appendBatch(batch)
+					if lastMsg != nil {
+						session.MarkMessage(lastMsg, "")
+					}
+				}
 				return nil
 			}
 			if h.server.shutdown.Load() {
 				return nil
 			}
-			h.server.appendBatch([]string{string(msg.Value)})
-			session.MarkMessage(msg, "")
+			batch = append(batch, string(msg.Value))
+			lastMsg = msg
+
+			if len(batch) >= batchSize {
+				h.server.appendBatch(batch)
+				session.MarkMessage(lastMsg, "")
+				batch = make([]string, 0, batchSize)
+				lastMsg = nil
+			}
+
+		drain:
+			for len(batch) < batchSize {
+				select {
+				case msg2, ok2 := <-claim.Messages():
+					if !ok2 {
+						break drain
+					}
+					if h.server.shutdown.Load() {
+						if len(batch) > 0 {
+							h.server.appendBatch(batch)
+						}
+						return nil
+					}
+					batch = append(batch, string(msg2.Value))
+					lastMsg = msg2
+				default:
+					break drain
+				}
+			}
+
+			if len(batch) >= batchSize {
+				h.server.appendBatch(batch)
+				session.MarkMessage(lastMsg, "")
+				batch = make([]string, 0, batchSize)
+				lastMsg = nil
+			}
 		}
 	}
 }
@@ -238,14 +286,14 @@ func (s *Server) startKafkaConsumer(ctx context.Context) {
 	config := sarama.NewConfig()
 	config.ClientID = "go-ws-" + INSTANCE
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
-	config.Consumer.MaxProcessingTime = 500 * time.Millisecond
+	config.Consumer.MaxProcessingTime = 100 * time.Millisecond
 	config.Consumer.Fetch.Max = 50 * 1024 * 1024
 	config.Consumer.Fetch.Min = 1
-	config.Consumer.Fetch.Default = 1024 * 1024
-	config.Consumer.MaxWaitTime = 500 * time.Millisecond
+	config.Consumer.Fetch.Default = 1 * 1024 * 1024
+	config.Consumer.MaxWaitTime = 100 * time.Millisecond
 	config.Consumer.Group.Session.Timeout = 30 * time.Second
 	config.Consumer.Group.Rebalance.Timeout = 30 * time.Second
-	config.ChannelBufferSize = 10000
+	config.ChannelBufferSize = 100000
 
 	group, err := sarama.NewConsumerGroup([]string{BROKER}, GROUP_ID, config)
 	if err != nil {
