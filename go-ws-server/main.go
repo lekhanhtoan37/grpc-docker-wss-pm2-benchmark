@@ -24,7 +24,7 @@ var (
 	TOPIC     = envStr("KAFKA_TOPIC", "benchmark-messages")
 	INSTANCE  = envStr("NODE_APP_INSTANCE", envStr("CONTAINER_ID", envStr("HOSTNAME", strconv.Itoa(os.Getpid()))))
 	PORT      = calcPort(BASE_PORT, INSTANCE)
-	GROUP_ID  = "go-ws-benchmark-worker-" + INSTANCE
+	GROUP_ID  = envStr("GROUP_ID", "go-ws-benchmark-worker-"+INSTANCE)
 	BATCH_MAX = envInt("BATCH_MAX", 20)
 	LINGER_MS = envInt("LINGER_MS", 5)
 )
@@ -136,9 +136,11 @@ func (s *Server) flushToClients() {
 	s.clientsMu.Lock()
 	var dead []*Client
 	for c := range s.clients {
-		if !c.trySend(payload) {
+		if !c.alive {
 			dead = append(dead, c)
+			continue
 		}
+		c.trySend(payload)
 	}
 	for _, c := range dead {
 		delete(s.clients, c)

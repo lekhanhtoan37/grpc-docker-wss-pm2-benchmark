@@ -9,6 +9,7 @@ module.exports = {
       env: {
         KAFKA_BROKER: "192.168.0.9:9091",
         KAFKA_TOPIC: "benchmark-messages",
+        GROUP_ID: "go-ws-benchmark-pm2",
         PORT: 8092,
       },
       kill_timeout: 10000,
