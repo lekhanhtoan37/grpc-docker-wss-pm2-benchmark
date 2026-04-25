@@ -419,7 +419,7 @@ echo ""
 echo "--- Step 4f: Start Go WS servers (PM2) ---"
 cd "$BASEDIR/go-ws-server"
 PATH="$RESOLVED_PATH" go mod tidy
-PATH="$RESOLVED_PATH" go build -o go-ws-server .
+  PATH="$RESOLVED_PATH" GOTOOLCHAIN=local go build -o go-ws-server .
 echo "Go WS binary: $(ls -lh go-ws-server | awk '{print $5, $6, $7, $8}')"
 run_pm2 describe go-ws-benchmark &>/dev/null && run_pm2 delete go-ws-benchmark 2>/dev/null || true
 run_pm2 start ecosystem.config.js

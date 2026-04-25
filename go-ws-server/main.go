@@ -153,19 +153,12 @@ func (s *Server) appendBatch(entries []string) {
 	atomic.AddInt64(&s.msgsIn, int64(len(entries)))
 	atomic.AddInt64(&s.batchCount, 1)
 
-	for len(entries) > 0 {
-		space := BATCH_MAX - len(s.buffer)
-		if space <= 0 {
-			s.flushMu.Unlock()
-			s.flushToClients()
-			s.flushMu.Lock()
-			continue
-		}
-		if space > len(entries) {
-			space = len(entries)
-		}
-		s.buffer = append(s.buffer, entries[:space]...)
-		entries = entries[space:]
+	s.buffer = append(s.buffer, entries...)
+
+	if len(s.buffer) >= BATCH_MAX {
+		s.flushMu.Unlock()
+		s.flushToClients()
+		return
 	}
 
 	if len(s.buffer) > 0 && s.timer == nil && !s.flushing {
@@ -215,15 +208,14 @@ type consumerHandler struct {
 func (h *consumerHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
 func (h *consumerHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	const batchSize = 1024
-	batch := make([]string, 0, batchSize)
-	lastMsg := (*sarama.ConsumerMessage)(nil)
+	entries := make([]string, 0, 4096)
+	var lastMsg *sarama.ConsumerMessage
 
 	for {
 		select {
 		case <-h.ctx.Done():
-			if len(batch) > 0 {
-				h.server.appendBatch(batch)
+			if len(entries) > 0 {
+				h.server.appendBatch(entries)
 				if lastMsg != nil {
 					session.MarkMessage(lastMsg, "")
 				}
@@ -231,8 +223,8 @@ func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 			return nil
 		case msg, ok := <-claim.Messages():
 			if !ok {
-				if len(batch) > 0 {
-					h.server.appendBatch(batch)
+				if len(entries) > 0 {
+					h.server.appendBatch(entries)
 					if lastMsg != nil {
 						session.MarkMessage(lastMsg, "")
 					}
@@ -242,40 +234,35 @@ func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 			if h.server.shutdown.Load() {
 				return nil
 			}
-			batch = append(batch, string(msg.Value))
+			entries = append(entries, string(msg.Value))
 			lastMsg = msg
 
-			if len(batch) >= batchSize {
-				h.server.appendBatch(batch)
-				session.MarkMessage(lastMsg, "")
-				batch = make([]string, 0, batchSize)
-				lastMsg = nil
-			}
-
 		drain:
-			for len(batch) < batchSize {
+			for {
 				select {
 				case msg2, ok2 := <-claim.Messages():
 					if !ok2 {
 						break drain
 					}
 					if h.server.shutdown.Load() {
-						if len(batch) > 0 {
-							h.server.appendBatch(batch)
+						if len(entries) > 0 {
+							h.server.appendBatch(entries)
 						}
 						return nil
 					}
-					batch = append(batch, string(msg2.Value))
+					entries = append(entries, string(msg2.Value))
 					lastMsg = msg2
 				default:
 					break drain
 				}
 			}
 
-			if len(batch) >= batchSize {
-				h.server.appendBatch(batch)
-				session.MarkMessage(lastMsg, "")
-				batch = make([]string, 0, batchSize)
+			if len(entries) > 0 {
+				h.server.appendBatch(entries)
+				if lastMsg != nil {
+					session.MarkMessage(lastMsg, "")
+				}
+				entries = make([]string, 0, 4096)
 				lastMsg = nil
 			}
 		}
