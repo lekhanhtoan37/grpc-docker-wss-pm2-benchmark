@@ -34,6 +34,8 @@ RUNS="${RUNS:-1}"
 TARGET_MBPS="${TARGET_MBPS:-1000}"
 NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
 SCENARIOS="${SCENARIOS:-3 30 90}"
+DISTRIBUTED_WORKERS="${DISTRIBUTED_WORKERS:-0}"
+COORDINATOR_PORT="${COORDINATOR_PORT:-50000}"
 RESULTS_DIR="$BASEDIR/results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
@@ -455,6 +457,13 @@ echo "Building Go benchmark client..."
 (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
 echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
 
+if [ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null; then
+  echo "Building distributed binaries (coordinator + $DISTRIBUTED_WORKERS workers)..."
+  (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o coordinator ./cmd/coordinator/ && PATH="$RESOLVED_PATH" go build -o worker ./cmd/worker/)
+  echo "Coordinator: $(ls -lh "$BASEDIR/benchmark-client/go-client/coordinator" | awk '{print $5}')"
+  echo "Worker: $(ls -lh "$BASEDIR/benchmark-client/go-client/worker" | awk '{print $5}')"
+fi
+
 # ──────────────────────────────────────────────
 # Step 6b: Check container readiness
 # ──────────────────────────────────────────────
@@ -592,6 +601,8 @@ cleanup() {
   echo ""
   echo "--- Cleanup ---"
   stop_producer
+  pkill -f "coordinator.*-listen" 2>/dev/null || true
+  pkill -f "worker.*-coordinator" 2>/dev/null || true
   cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
   cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
@@ -636,9 +647,42 @@ for CONNS in $SCENARIOS; do
     echo "--- End server diagnostics ---"
 
     CLIENT_LOG="$RESULTS_DIR/client-conns${CONNS}-run${run}-${TIMESTAMP}.log"
-    "$BASEDIR/benchmark-client/go-client/benchmark-client" \
-      --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
-      2>&1 | tee "$CLIENT_LOG"
+    if [ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null; then
+      echo "--- Running distributed benchmark: coordinator + $DISTRIBUTED_WORKERS workers ---"
+      GO_DIR="$BASEDIR/benchmark-client/go-client"
+
+      "$GO_DIR/coordinator" \
+        -workers "$DISTRIBUTED_WORKERS" \
+        -warmup "$WARMUP" \
+        -duration "$DURATION" \
+        -conns "$CONNS" \
+        -listen ":${COORDINATOR_PORT}" \
+        > "$RESULTS_DIR/coordinator-conns${CONNS}-run${run}-${TIMESTAMP}.log" 2>&1 &
+      COORD_PID=$!
+      echo "Coordinator PID=$COORD_PID on :${COORDINATOR_PORT}"
+      sleep 2
+
+      WORKER_PIDS=""
+      for wi in $(seq 1 "$DISTRIBUTED_WORKERS"); do
+        "$GO_DIR/worker" \
+          -coordinator "localhost:${COORDINATOR_PORT}" \
+          -worker-id "worker-${wi}" \
+          > "$RESULTS_DIR/worker${wi}-conns${CONNS}-run${run}-${TIMESTAMP}.log" 2>&1 &
+        WORKER_PIDS="$WORKER_PIDS $!"
+      done
+      echo "Worker PIDs:$WORKER_PIDS"
+
+      wait "$COORD_PID" 2>/dev/null || true
+      for wpid in $WORKER_PIDS; do
+        wait "$wpid" 2>/dev/null || true
+      done
+
+      cat "$RESULTS_DIR/coordinator-conns${CONNS}-run${run}-${TIMESTAMP}.log" | tee "$CLIENT_LOG"
+    else
+      "$BASEDIR/benchmark-client/go-client/benchmark-client" \
+        --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
+        2>&1 | tee "$CLIENT_LOG"
+    fi
     echo "Client log: $CLIENT_LOG"
     echo ""
 
@@ -723,4 +767,5 @@ echo "=== Benchmark complete ==="
 echo "Results: $RESULTS_DIR/"
 echo "Runs: $RUNS x ${DURATION}s measurement"
 echo "Conns/group: $CONNS"
+echo "Mode: $([ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null && echo "distributed ($DISTRIBUTED_WORKERS workers)" || echo "single-process")"
 echo "Producer target: ${TARGET_MBPS} MB/s"

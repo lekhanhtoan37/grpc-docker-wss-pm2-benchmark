@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  coordinator:
+    build:
+      context: ./benchmark-client/go-client
+      dockerfile: Dockerfile.coordinator
+    command:
+      - "-workers=2"
+      - "-warmup=30"
+      - "-duration=120"
+      - "-conns=1"
+      - "-listen=:50000"
+    ports:
+      - "50000:50000"
+    networks:
+      - bench
+
+  worker-1:
+    build:
+      context: ./benchmark-client/go-client
+      dockerfile: Dockerfile.worker
+    command:
+      - "-coordinator=coordinator:50000"
+      - "-worker-id=worker-1"
+    depends_on:
+      - coordinator
+    network_mode: "host"
+    profiles:
+      - workers
+
+  worker-2:
+    build:
+      context: ./benchmark-client/go-client
+      dockerfile: Dockerfile.worker
+    command:
+      - "-coordinator=coordinator:50000"
+      - "-worker-id=worker-2"
+    depends_on:
+      - coordinator
+    network_mode: "host"
+    profiles:
+      - workers
+
+networks:
+  bench:
+    driver: bridge
