@@ -1,6 +1,6 @@
 # WebSocket vs gRPC Throughput Benchmark
 
-So sánh throughput giữa **6 deployment modes**: WS (PM2 host), uWS (PM2 host, Docker bridge, Docker host), gRPC (Docker bridge, Docker host). Tất cả consume từ cùng một Kafka topic.
+So sánh throughput giữa **9 deployment modes**: WS (PM2 host), uWS (PM2 host, Docker bridge, Docker host), Go WS (PM2 host, Docker bridge, Docker host), gRPC (Docker bridge, Docker host). Tất cả consume từ cùng một Kafka topic.
 
 ## Architecture
 
@@ -8,45 +8,50 @@ So sánh throughput giữa **6 deployment modes**: WS (PM2 host), uWS (PM2 host,
                           SERVER (Ubuntu 24.04)
   ┌─────────────────┐    ┌─────────────────────────────────────────────┐
   │ Producer (x10)  │    │  Go Benchmark Client                        │
-  │ node-rdkafka    │    │  6 groups × 3 conns = 18 connections        │
+  │ node-rdkafka    │    │  9 groups × N conns                         │
   │ ~1GB/s total    │    │  coder/websocket + grpc-go                  │
   └────────┬────────┘    │  hdr-histogram latency per message          │
-           │             └──┬────┬────┬────┬────┬────┬────────────────┘
-           ▼                │    │    │    │    │    │
-    ┌─────────────┐        │    │    │    │    │    │
-    │ Kafka KRaft │        │    │    │    │    │    │
-    │ 192.168.0.9 │        │    │    │    │    │    │
-    │ :9091       │        │    │    │    │    │    │
-    │ 12 partitions       │    │    │    │    │    │
-    └──────┬──────┘        │    │    │    │    │    │
-           │               │    │    │    │    │    │
-    ┌──────┴──────────────────────────────────────────┐
-    │ Each server: unique Kafka consumer group         │
-    │ → receives ALL messages (independent consumers)  │
-    └──────┬──────────────────────────────────────────┘
+           │             └──┬────┬────┬────┬────┬────┬────┬────┬──────┘
+           ▼                │    │    │    │    │    │    │    │
+    ┌─────────────┐        │    │    │    │    │    │    │    │
+    │ Kafka KRaft │        │    │    │    │    │    │    │    │
+    │ 192.168.0.9 │        │    │    │    │    │    │    │    │
+    │ :9091       │        │    │    │    │    │    │    │    │
+    │ 12 partitions       │    │    │    │    │    │    │    │
+    └──────┬──────┘        │    │    │    │    │    │    │    │
+           │               │    │    │    │    │    │    │    │
+    ┌──────┴──────────────────────────────────────────────────────┐
+    │ Each server: unique Kafka consumer group per instance       │
+    │ → receives ALL messages (independent consumers)             │
+    └──────┬─────────────────────────────────────────────────────┘
            │
-    ┌──────┴──────┐  ┌──────────────┐  ┌────────────────────────────┐
-    │ WS (PM2)    │  │ uWS (PM2)    │  │ uWS/gRPC (Docker)          │
-    │ 3 workers   │  │ 3 workers    │  │                            │
-    │ :8090       │  │ :8091        │  │ Bridge:                    │
-    └─────────────┘  └──────────────┘  │  nginx:50051→3 gRPC reps  │
+    ┌──────┴──────┐  ┌──────────────┐  ┌────────────────────────────┐  ┌────────────────┐
+    │ WS (PM2)    │  │ uWS (PM2)    │  │ uWS/gRPC/GoWS (Docker)    │  │ Go WS (PM2)    │
+    │ 3 workers   │  │ 3 workers    │  │                            │  │ 3 workers      │
+    │ :8090       │  │ :8091        │  │ Bridge:                    │  │ :8092-94      │
+    └─────────────┘  └──────────────┘  │  nginx:50051→3 gRPC reps  │  └────────────────┘
                                        │  nginx:50061→3 uWS reps   │
+                                       │  nginx:50071→3 GoWS reps  │
                                        │ Host:                      │
                                        │  60051-53 (gRPC)           │
                                        │  60061-63 (uWS)            │
+                                       │  60071-73 (Go WS)          │
                                        └────────────────────────────┘
 ```
 
-## 6 Benchmark Groups
+## 9 Benchmark Groups
 
 | # | Group | Runtime | Network | Port | Load Balance |
 |---|-------|---------|---------|------|-------------|
 | 1 | WS (host/PM2) | PM2 cluster | Host | 8090 | Kernel TCP |
 | 2 | uWS (host/PM2) | PM2 cluster | Host | 8091 | Kernel TCP |
-| 3 | uWS bridge | Docker | Bridge + nginx | 50061 | nginx upstream |
-| 4 | uWS host | Docker | Host | 60061-63 | Direct |
-| 5 | gRPC bridge | Docker | Bridge + nginx | 50051 | nginx grpc_pass |
-| 6 | gRPC host | Docker | Host | 60051-53 | Direct |
+| 3 | Go WS (host/PM2) | PM2 fork (Go binary) | Host | 8092-94 | Direct |
+| 4 | uWS bridge | Docker | Bridge + nginx | 50061 | nginx upstream |
+| 5 | Go WS bridge | Docker | Bridge + nginx | 50071 | nginx upstream |
+| 6 | uWS host | Docker | Host | 60061-63 | Direct |
+| 7 | Go WS host | Docker | Host | 60071-73 | Direct |
+| 8 | gRPC bridge | Docker | Bridge + nginx | 50051 | nginx grpc_pass |
+| 9 | gRPC host | Docker | Host | 60051-53 | Direct |
 
 ## Methodology
 
@@ -110,7 +115,7 @@ message StreamResponse {
 
 ### Benchmark Protocol
 
-1. **Start**: Client connects 18 WebSocket/gRPC streams (3 per group)
+1. **Start**: Client connects WebSocket/gRPC streams (N per group × 9 groups)
 2. **Warmup**: 30 seconds — connections stabilize, consumer groups join
 3. **Measurement**: 120 seconds — count msgs, measure latency per message
 4. **Live stats**: Every 30s — print active connections, raw/processed counts
@@ -124,18 +129,94 @@ Mỗi server instance có unique consumer group → nhận TẤT CẢ messages t
 |--------|-----------------|
 | WS worker 0/1/2 | `ws-benchmark-worker-{NODE_APP_INSTANCE}` |
 | uWS worker 0/1/2 | `uws-benchmark-worker-{NODE_APP_INSTANCE}` |
+| Go WS worker 0/1/2 | `go-ws-benchmark-worker-{NODE_APP_INSTANCE}` |
 | gRPC bridge-1/2/3 | `grpc-benchmark-{CONTAINER_ID}` |
 | gRPC host-1/2/3 | `grpc-benchmark-{CONTAINER_ID}` |
 | uWS bridge-1/2/3 | `uws-benchmark-worker-{CONTAINER_ID}` |
 | uWS host-1/2/3 | `uws-benchmark-worker-{CONTAINER_ID}` |
+| Go WS bridge-1/2/3 | `go-ws-benchmark-{CONTAINER_ID}` |
+| Go WS host-1/2/3 | `go-ws-benchmark-{CONTAINER_ID}` |
 
-→ 18 consumer groups đọc cùng 1 topic → mỗi group nhận tất cả messages.
+→ 27 consumer groups đọc cùng 1 topic → mỗi group nhận tất cả messages.
 
 ## Benchmark Results
 
 **Environment**: Ubuntu 24.04, 12-core, 32GB RAM, Kafka KRaft (1 broker), 10 producers × ~1 GB/s target, 12 partitions, 30s warmup + 120s measurement
 
-### Scenario 1: 3 Connections/Group (18 total)
+### 90 Connections/Group (810 total) — Latest Results
+
+#### Throughput
+
+```
+Group               Conns         Msgs       MB/s        msg/s
+------------------------------------------------------------
+WS (host/PM2)          90     39876965     328.31       332291
+uWS (host/PM2)         90     35979637     296.18       299815
+Go WS (host/PM2)       90     53109682     437.16       442559
+uWS bridge             90     41747672     343.60       347880
+Go WS bridge           90     52068069     428.68       433879
+uWS host               90     36600608     301.21       304990
+Go WS host             90     48841174     402.11       406989
+gRPC bridge            90     15036562     123.61       125298
+gRPC host              90      2874782      23.63        23955
+```
+
+#### Raw Receive Stats
+
+```
+Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
+------------------------------------------------------------
+WS (host/PM2)      39876965     328.31       332291       0.0%
+uWS (host/PM2)     35979637     296.18       299815       0.0%
+Go WS (host/PM2)   53109682     437.16       442559       0.0%
+uWS bridge         41747672     343.60       347880       0.0%
+Go WS bridge       52068069     428.68       433879       0.0%
+uWS host           36600608     301.21       304990       0.0%
+Go WS host         48841174     402.11       406989       0.0%
+gRPC bridge        15036562     123.61       125298       0.0%
+gRPC host           2874782      23.63        23955       0.0%
+```
+
+#### vs WS Throughput
+
+```
+uWS (host/PM2)    -9.8%
+Go WS (host/PM2) +33.2%  ← FASTEST
+uWS bridge        +4.7%
+Go WS bridge     +30.6%
+uWS host          -8.3%
+Go WS host       +22.5%
+gRPC bridge      -62.3%
+gRPC host        -92.8%
+```
+
+#### Latency Percentiles (milliseconds)
+
+```
+Pctl        WS(host)   uWS(host)  GoWS(host)  uWSbridge  GoWSbridge  uWShost   GoWShost  gRPCbridge gRPChost
+----------------------------------------------------------------------------------------------------------------
+p50           246.3      257.9      142.0       227.4      183.1       262.0     172.8     256.0      254.7
+p75           269.7      288.9      158.2       271.8      200.7       293.3     189.4     284.4      259.7
+p90           292.0      305.9      172.2       288.9      215.4       310.1     202.8     306.4      264.0
+p95           309.3      312.5      180.0       296.7      223.0       317.2     210.2     312.2      267.8
+p99           339.0      326.6      193.3       307.2      236.6       331.1     223.6     316.7      330.0
+p99.9         353.6      339.7      206.4       323.0      247.6       350.7     234.1     320.1      368.1
+```
+
+#### Latency Delta vs WS (host/PM2) (milliseconds)
+
+```
+Pctl       uWS(host)  GoWS(host)  uWSbridge  GoWSbridge  uWShost  GoWShost  gRPCbridge  gRPChost
+------------------------------------------------------------------------------------------------------
+p50          +11.7     -104.3       -18.9      -63.2      +15.7    -73.5       +9.7      +8.4
+p75          +19.1     -111.5        +2.1      -69.1      +23.6    -80.3      +14.7    -10.1
+p90          +13.9     -119.8        -3.1      -76.7      +18.1    -89.3      +14.4    -28.0
+p95           +3.1     -129.4       -12.6      -86.4       +7.9    -99.1       +2.9    -41.5
+p99          -12.3     -145.6       -31.7     -102.4       -7.9   -115.3      -22.3     -8.9
+p99.9        -13.9     -147.2       -30.7     -106.0       -2.9   -119.5      -33.6     +14.4
+```
+
+### Scenario 1: 3 Connections/Group (27 total) — Previous Results
 
 #### Throughput
 
@@ -148,19 +229,6 @@ uWS bridge              3      3664000      30.14        30533
 uWS host                3      3599749      29.61        29998
 gRPC bridge             3     33590760     276.30       279923
 gRPC host               3     32823528     269.99       273529
-```
-
-#### Raw Receive Stats
-
-```
-Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
-------------------------------------------------------------
-WS (host/PM2)       5926832      48.75        49390       0.0%
-uWS (host/PM2)      4166000      34.27        34717       0.0%
-uWS bridge          3664000      30.14        30533       0.0%
-uWS host            3599749      29.61        29998       0.0%
-gRPC bridge        33590760     276.30       279923       0.0%
-gRPC host          32823528     269.99       273529       0.0%
 ```
 
 #### vs WS Throughput
@@ -186,7 +254,7 @@ gRPC bridge               3          0        0.0ms        0.0ms        0.0ms
 gRPC host                 3          0        0.0ms        0.0ms        0.0ms
 ```
 
-### Scenario 2: 90 Connections/Group (540 total)
+### Scenario 2: 90 Connections/Group (540 total) — Previous Results (6 groups)
 
 #### Throughput
 
@@ -201,19 +269,6 @@ gRPC bridge            90     40517063     333.04       337407
 gRPC host              90     54442342     447.50       453370
 ```
 
-#### Raw Receive Stats
-
-```
-Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
-------------------------------------------------------------
-WS (host/PM2)      66338667     545.81       552437       0.0%
-uWS (host/PM2)     64789091     533.06       539532       0.0%
-uWS bridge         73890399     607.94       615324       0.0%
-uWS host           65388333     537.99       544523       0.0%
-gRPC bridge        40517063     333.04       337407       0.0%
-gRPC host          54442342     447.50       453370       0.0%
-```
-
 #### vs WS Throughput
 
 ```
@@ -224,83 +279,33 @@ gRPC bridge      -39.0%
 gRPC host        -18.0%
 ```
 
-#### Run 2: 90 Connections/Group (540 total)
-
-**Throughput**
-
-```
-Group               Conns         Msgs       MB/s        msg/s
-------------------------------------------------------------
-WS (host/PM2)          90     75952988     625.26       632847
-uWS (host/PM2)         90     71802334     591.09       598263
-uWS bridge             90     78176583     643.56       651374
-uWS host               90     71909856     591.97       599159
-gRPC bridge            90     36632558     301.27       305226
-gRPC host              90     53054017     436.33       442051
-```
-
-**Raw Receive Stats**
-
-```
-Group              Raw Msgs   Raw MB/s    Raw msg/s     Drop %
-------------------------------------------------------------
-WS (host/PM2)      75952988     625.26       632847       0.0%
-uWS (host/PM2)     71802334     591.09       598263       0.0%
-uWS bridge         78176583     643.56       651374       0.0%
-uWS host           71909856     591.97       599159       0.0%
-gRPC bridge        36632558     301.27       305226       0.0%
-gRPC host          53054017     436.33       442051       0.0%
-```
-
-**vs WS Throughput**
-
-```
-uWS (host/PM2)    -5.5%
-uWS bridge        +2.9%
-uWS host          -5.3%
-gRPC bridge      -51.8%
-gRPC host        -30.2%
-```
-
-**Connection Stability**
-
-```
-Group            Disconnects Reconnects   Reconn p50   Reconn p99   Reconn max
-----------------------------------------------------------------------------
-WS (host/PM2)           173          0        0.0ms        0.0ms        0.0ms
-uWS (host/PM2)           90          0        0.0ms        0.0ms        0.0ms
-uWS bridge               98          0        0.0ms        0.0ms        0.0ms
-uWS host                 90          0        0.0ms        0.0ms        0.0ms
-gRPC bridge              97          7       58.0ms     2302.0ms     2302.0ms
-gRPC host                90          0        0.0ms        0.0ms        0.0ms
-```
-
 ### Key Findings
 
-#### Low Concurrency (3 conns/group)
+#### Go WS Dominates at High Concurrency (90 conns)
 
-1. **gRPC dominates throughput**: ~276 MB/s (bridge) vs ~49 MB/s (WS) — **5.6x more throughput**
-2. **gRPC bridge ≈ gRPC host**: 276 vs 270 MB/s → Docker bridge + nginx overhead negligible
-3. **WS (ws library) > uWS** on host/PM2: 49 vs 34 MB/s
-4. **Zero drops across all groups**: 0% message loss
-5. **Zero reconnects**: All connections stable throughout measurement
-6. **uWS bridge ≈ uWS host**: 30 vs 30 MB/s → nginx adds minimal overhead
+1. **Go WS is the fastest**: 437 MB/s (host/PM2), 429 MB/s (bridge), 402 MB/s (host) — **+22-33% vs Node.js WS**
+2. **Go WS lowest latency**: p50 = 142ms (host/PM2) vs WS 246ms — **42% lower latency**
+3. **Go WS bridge ≈ Go WS host/PM2**: 429 vs 437 MB/s → Docker bridge + nginx adds only ~2% overhead
+4. **Zero drops**: All Go WS groups maintain 0% message loss
 
-#### High Concurrency (90 conns/group) — Game Changer
+#### WS/uWS Comparison
 
-1. **uWS bridge wins**: 608 MB/s — highest throughput across all groups (+11.4% vs WS)
-2. **WS/uWS throughput scales linearly**: 3 conns → ~49 MB/s, 90 conns → ~546 MB/s (~11x with 30x connections)
-3. **gRPC throughput does NOT scale**: 3 conns → ~276 MB/s, 90 conns → ~333-447 MB/s (only 1.2-1.6x)
-4. **gRPC slower than WS/uWS at high concurrency**: gRPC bridge -39%, gRPC host -18% vs WS
-5. **Zero drops at 540 connections**: All protocols maintain 0% message loss even at scale
-6. **BATCH_MAX=20**: Smaller batches favor WS/uWS fan-out pattern (1 Kafka msg → N connections)
+1. **uWS bridge edges WS**: 344 vs 328 MB/s (+4.7%)
+2. **uWS host/PM2 slightly slower than WS**: 296 vs 328 MB/s (-9.8%) — possible PM2 cluster mode overhead
+3. **Both WS and uWS maintain 0% drop rate** at 810+ total connections
 
-#### Why gRPC Doesn't Scale Like WS
+#### gRPC Doesn't Scale
 
-- gRPC uses **server-side streaming** (1 stream per client, server pushes batches) → serialization bottleneck
-- WS/uWS use **broadcast fan-out** (each Kafka batch → send to all connections) → naturally parallelizable
-- At 90 connections, gRPC must serialize/push to 90 streams per batch; WS/uWS can batch-send to all sockets efficiently
-- gRPC's HTTP/2 framing overhead grows with connection count; WebSocket is lighter per-connection
+1. **gRPC bridge**: 124 MB/s — **-62% vs WS**, severely bottlenecked
+2. **gRPC host**: 24 MB/s — **-93% vs WS**, catastrophic at 90 connections
+3. **gRPC latency competitive with WS** (256ms p50) but throughput collapses — HTTP/2 framing overhead
+4. At 3 conns, gRPC was 5.6x faster than WS; at 90 conns, gRPC is 2.7x slower — **scales poorly**
+
+#### Architecture Impact
+
+1. **PM2 fork (Go) > PM2 cluster (Node)**: Go binary runs as fork mode → no cluster IPC overhead
+2. **Docker bridge + nginx adds minimal overhead**: Go WS bridge 429 vs host 402 MB/s (bridge is actually faster!)
+3. **Language/runtime matters more than deployment mode**: Go WS in any mode beats all Node.js modes
 
 ## Project Structure
 
@@ -317,12 +322,20 @@ gRPC host                90          0        0.0ms        0.0ms        0.0ms
 │   ├── docker-compose.yml       # Bridge: 3 replicas + nginx (WS proxy)
 │   ├── docker-compose.host.yml  # Host: 3 containers, ports 60061-63
 │   └── nginx.conf               # WebSocket reverse proxy config
+├── go-ws-server/
+│   ├── main.go                  # Go WS Kafka→WS server (IBM sarama + nhooyr/websocket)
+│   ├── go.mod                   # Go 1.22, IBM sarama v1.45.1
+│   ├── Dockerfile               # golang:1.23 multi-stage build
+│   ├── docker-compose.yml       # Bridge: 3 replicas + nginx (WS proxy)
+│   ├── docker-compose.host.yml  # Host: 3 containers, ports 60071-73
+│   ├── nginx.conf               # WebSocket reverse proxy config
+│   └── ecosystem.config.js      # PM2 fork mode, 3 instances, ports 8092-94
 ├── ws-server/
 │   ├── server.js                # WS (ws lib) Kafka→WS server, batch mode
 │   └── ecosystem.config.js      # PM2 cluster config, port 8090
 ├── benchmark-client/
 │   └── go-client/
-│       ├── main.go              # Go benchmark client, 6 groups
+│       ├── main.go              # Go benchmark client, 9 groups
 │       └── go.mod               # coder/websocket + grpc-go + hdr-histogram
 ├── producer/
 │   └── producer-rdkafka.js      # node-rdkafka producer, ~1KB JSON msgs
@@ -349,12 +362,14 @@ sudo WARMUP=60 DURATION=300 RUNS=1 CONNS=3 bash run-benchmark-1gb.sh
 |-----------|------|
 | WS server | `ws` ^8.x (PM2 cluster, 3 workers) |
 | uWS server | `uWebSockets.js` v20.49.0 (PM2 cluster + Docker) |
+| Go WS server | Go 1.22 + `IBM/sarama` v1.45.1 + `nhooyr.io/websocket` (PM2 fork + Docker) |
 | gRPC server | `@grpc/grpc-js` ^1.12 (Docker) |
-| Kafka client (server) | `kafkajs` ^2.x |
+| Kafka client (WS/uWS/gRPC) | `kafkajs` ^2.x |
+| Kafka client (Go WS) | `IBM/sarama` v1.45.1 |
 | Kafka client (producer) | `node-rdkafka` (C bindings, zero-copy) |
 | Benchmark client | Go 1.22 + `coder/websocket` + `grpc-go` + `hdr-histogram` |
 | Reverse proxy | nginx:alpine (gRPC `grpc_pass` + WS `proxy_pass`) |
 | Kafka broker | Kafka 3.9.2 KRaft mode (no Zookeeper) |
-| Process manager | PM2 ^5.x (cluster mode) |
+| Process manager | PM2 ^5.x (cluster mode for Node, fork mode for Go) |
 | Containers | Docker Compose v2 |
 | Runtime | Node 22 (uWS), Node 20 (gRPC) |
