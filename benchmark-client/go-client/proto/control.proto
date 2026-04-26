@@ -1,0 +1,81 @@
+syntax = "proto3";
+package control;
+
+option go_package = "benchmark-client/proto/control";
+
+service CoordinatorService {
+  rpc RegisterWorker(RegisterRequest) returns (RegisterResponse);
+  rpc ReportSnapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc ReportFinal(FinalReport) returns (FinalResponse);
+}
+
+message RegisterRequest {
+  string worker_id = 1;
+  string hostname = 2;
+}
+
+message RegisterResponse {
+  repeated GroupAssignment groups = 1;
+  int32 warmup_seconds = 2;
+  int32 measure_seconds = 3;
+  int64 measure_start_unix_ms = 4;
+}
+
+message GroupAssignment {
+  string name = 1;
+  string type = 2;
+  repeated string endpoints = 3;
+  int32 connections = 4;
+}
+
+message SnapshotRequest {
+  string worker_id = 1;
+  int64 elapsed_ms = 2;
+  repeated GroupSnapshot groups = 3;
+}
+
+message GroupSnapshot {
+  string name = 1;
+  int64 msg_count = 2;
+  int64 byte_count = 3;
+  int64 raw_count = 4;
+  int64 raw_bytes = 5;
+  int32 active_conns = 6;
+  bytes latency_histogram = 7;
+}
+
+message SnapshotResponse {
+  bool ok = 1;
+}
+
+message FinalReport {
+  string worker_id = 1;
+  int64 measure_duration_ms = 2;
+  repeated GroupResult groups = 3;
+}
+
+message GroupResult {
+  string name = 1;
+  repeated ConnResult connections = 2;
+  bytes latency_histogram = 3;
+  bytes reconnect_histogram = 4;
+}
+
+message ConnResult {
+  int32 conn_index = 1;
+  string endpoint = 2;
+  int64 msg_count = 3;
+  int64 byte_count = 4;
+  int64 raw_count = 5;
+  int64 raw_bytes = 6;
+  int64 disconnect_count = 7;
+  int64 reconnect_count = 8;
+  bool first_msg_received = 9;
+  bool conn_active = 10;
+  bytes latency_histogram = 11;
+  bytes reconnect_histogram = 12;
+}
+
+message FinalResponse {
+  bool ok = 1;
+}
