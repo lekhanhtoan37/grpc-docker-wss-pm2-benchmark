@@ -48,3 +48,5 @@ coverage/
 .nyc_output/
 go-ws-server/go-ws-server
 benchmark-client/go-client/benchmark-client
+benchmark-client/go-client/coordinator
+benchmark-client/go-client/worker
