@@ -143,7 +143,52 @@ Mỗi server instance có unique consumer group → nhận TẤT CẢ messages t
 
 **Environment**: Ubuntu 24.04, 12-core, 32GB RAM, Kafka KRaft (1 broker), 10 producers × ~1 GB/s target, 12 partitions, 30s warmup + 120s measurement
 
-### 90 Connections/Group (810 total) — Latest Results
+### Throughput Summary
+
+| Group | 30 conns MB/s | 90 conns MB/s | 30c vs WS | 90c vs WS |
+|-------|--------------|--------------|-----------|-----------|
+| WS (host/PM2) | 335.09 | 328.31 | baseline | baseline |
+| uWS (host/PM2) | 302.31 | 296.18 | -9.8% | -9.8% |
+| **Go WS (host/PM2)** | **431.84** | **437.16** | **+28.9%** | **+33.2%** |
+| uWS bridge | 306.06 | 343.60 | -8.7% | +4.7% |
+| Go WS bridge | 393.72 | 428.68 | +17.5% | +30.6% |
+| uWS host | 338.93 | 301.21 | +1.1% | -8.3% |
+| Go WS host | 401.07 | 402.11 | +19.7% | +22.5% |
+| gRPC bridge | 140.57 | 123.61 | -58.1% | -62.3% |
+| gRPC host | 130.96 | 23.63 | -60.9% | -92.8% |
+
+### 30 Connections/Group (270 total)
+
+#### Throughput
+
+```
+Group               Conns         Msgs       MB/s        msg/s
+------------------------------------------------------------
+WS (host/PM2)          30     40747639     335.09       339490
+uWS (host/PM2)         30     36760445     302.31       306271
+Go WS (host/PM2)       30     52491319     431.84       437333
+uWS bridge             30     37216864     306.06       310073
+Go WS bridge           30     47847007     393.72       398639
+uWS host               30     41213967     338.93       343375
+Go WS host             30     48738075     401.07       406063
+gRPC bridge            30     17109949     140.57       142552
+gRPC host              30     15940024     130.96       132805
+```
+
+#### vs WS Throughput
+
+```
+uWS (host/PM2)    -9.8%
+Go WS (host/PM2) +28.9%  ← FASTEST
+uWS bridge        -8.7%
+Go WS bridge     +17.5%
+uWS host          +1.1%
+Go WS host       +19.7%
+gRPC bridge      -58.1%
+gRPC host        -60.9%
+```
+
+### 90 Connections/Group (810 total)
 
 #### Throughput
 
