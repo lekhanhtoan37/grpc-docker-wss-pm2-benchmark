@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	pb "benchmark-client/proto"
+
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/coder/websocket"
 	"google.golang.org/grpc"
@@ -76,8 +76,156 @@ func newGroupStats(conns int) *GroupStats {
 	return gs
 }
 
+var timestampKey = []byte(`"timestamp":`)
+
+var latencySlicePool = sync.Pool{
+	New: func() any {
+		// BATCH_MAX=20, để dư chút cho an toàn
+		return make([]int64, 0, 64)
+	},
+}
+
+type wsFrameEvent struct {
+	msgCount int64
+	byteSize int64
+	samples  []int64
+}
+
+func getLatencySlice() []int64 {
+	return latencySlicePool.Get().([]int64)[:0]
+}
+
+func putLatencySlice(v []int64) {
+	if v == nil {
+		return
+	}
+	if cap(v) > 1024 {
+		v = make([]int64, 0, 64)
+	} else {
+		v = v[:0]
+	}
+	latencySlicePool.Put(v)
+}
+
+func readFrameReusable(r io.Reader, dst []byte) ([]byte, error) {
+	dst = dst[:0]
+	var scratch [32 * 1024]byte
+
+	for {
+		n, err := r.Read(scratch[:])
+		if n > 0 {
+			dst = append(dst, scratch[:n]...)
+		}
+		if err == io.EOF {
+			return dst, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func extractTimestampInt64(msg []byte) int64 {
+	idx := bytes.Index(msg, timestampKey)
+	if idx < 0 {
+		return 0
+	}
+
+	i := idx + len(timestampKey)
+	for i < len(msg) {
+		c := msg[i]
+		if c == ' ' || c == '\t' {
+			i++
+			continue
+		}
+		break
+	}
+
+	var n int64
+	found := false
+	for i < len(msg) {
+		c := msg[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		found = true
+		n = n*10 + int64(c-'0')
+		i++
+	}
+
+	if !found {
+		return 0
+	}
+	return n
+}
+
+func wsStatsWorker(cs *ConnStats, in <-chan wsFrameEvent, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	var localMsgs int64
+	var localBytes int64
+
+	flush := func() {
+		if localMsgs != 0 {
+			cs.count.Add(localMsgs)
+			cs.rawCount.Add(localMsgs)
+			localMsgs = 0
+		}
+		if localBytes != 0 {
+			cs.bytes.Add(localBytes)
+			cs.rawBytes.Add(localBytes)
+			localBytes = 0
+		}
+	}
+
+	for {
+		select {
+		case ev, ok := <-in:
+			if !ok {
+				flush()
+				return
+			}
+
+			localMsgs += ev.msgCount
+			localBytes += ev.byteSize
+
+			if len(ev.samples) > 0 {
+				for _, lat := range ev.samples {
+					_ = cs.hist.RecordValue(lat)
+				}
+				putLatencySlice(ev.samples)
+			}
+
+			if localMsgs >= 32000 || localBytes >= 8*1024*1024 {
+				flush()
+			}
+
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
 func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	cs := stats[gi].conns[ci]
+
+	events := make(chan wsFrameEvent, 2048)
+
+	var statsWG sync.WaitGroup
+	statsWG.Add(1)
+	go wsStatsWorker(cs, events, &statsWG)
+
+	defer func() {
+		close(events)
+		statsWG.Wait()
+	}()
+
+	frameBuf := make([]byte, 0, 64*1024)
 
 	for {
 		select {
@@ -90,6 +238,7 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 			CompressionMode:      websocket.CompressionDisabled,
 			CompressionThreshold: 0,
 		}
+
 		connectStart := time.Now()
 		conn, _, err := websocket.Dial(ctx, endpoint, opts)
 		if err != nil {
@@ -97,112 +246,110 @@ func connectWS(ctx context.Context, gi, ci int, endpoint string, stats []*GroupS
 			continue
 		}
 		conn.SetReadLimit(128 * 1024 * 1024)
-		connectMs := time.Since(connectStart).Milliseconds()
 
-		firstConnect := !stats[gi].conns[ci].firstMsg.Load()
+		connectMicros := time.Since(connectStart).Microseconds()
+		firstConnect := !cs.firstMsg.Load()
 		if firstConnect {
-			log.Printf("[client] %s conn#%d connected to %s (%dms)", groups[gi].Name, ci+1, endpoint, connectMs)
+			log.Printf("[client] %s conn#%d connected to %s (%.2fms)", groups[gi].Name, ci+1, endpoint, float64(connectMicros)/1000.0)
+		} else {
+			cs.reconnectCount.Add(1)
+			_ = cs.reconnectHist.RecordValue(connectMicros)
 		}
-		stats[gi].conns[ci].connActive.Store(true)
-		if !firstConnect {
-			stats[gi].conns[ci].reconnectCount.Add(1)
-			stats[gi].conns[ci].reconnectHist.RecordValue(connectMs * 1000)
-		}
-
-		var localCount, localBytes int64
-		lastFlush := time.Now()
+		cs.connActive.Store(true)
 
 		for {
 			_, reader, err := conn.Reader(ctx)
 			if err != nil {
-				stats[gi].conns[ci].disconnectCount.Add(1)
-				stats[gi].conns[ci].connActive.Store(false)
-				stats[gi].conns[ci].count.Add(localCount)
-				stats[gi].conns[ci].bytes.Add(localBytes)
-				stats[gi].conns[ci].rawCount.Add(localCount)
-				stats[gi].conns[ci].rawBytes.Add(localBytes)
-				conn.Close(websocket.StatusInternalError, "read error")
+				if cs.disconnectCount.Load() < 3 {
+					log.Printf("[client] %s conn#%d read error: %v", groups[gi].Name, ci+1, err)
+				}
+				cs.disconnectCount.Add(1)
+				cs.connActive.Store(false)
+				_ = conn.Close(websocket.StatusInternalError, "read error")
 				break
 			}
 
-			msg, err := io.ReadAll(reader)
+			frameBuf, err = readFrameReusable(reader, frameBuf)
 			if err != nil {
-				stats[gi].conns[ci].disconnectCount.Add(1)
-				stats[gi].conns[ci].connActive.Store(false)
-				stats[gi].conns[ci].count.Add(localCount)
-				stats[gi].conns[ci].bytes.Add(localBytes)
-				stats[gi].conns[ci].rawCount.Add(localCount)
-				stats[gi].conns[ci].rawBytes.Add(localBytes)
-				conn.Close(websocket.StatusInternalError, "read error")
+				if cs.disconnectCount.Load() < 3 {
+					log.Printf("[client] %s conn#%d read frame error: %v", groups[gi].Name, ci+1, err)
+				}
+				cs.disconnectCount.Add(1)
+				cs.connActive.Store(false)
+				_ = conn.Close(websocket.StatusInternalError, "read frame error")
 				break
 			}
 
-			localBytes += int64(len(msg))
+			if len(frameBuf) == 0 {
+				continue
+			}
 
-			remaining := msg
-			for len(remaining) > 0 {
-				idx := bytes.IndexByte(remaining, '\n')
-				var line []byte
-				if idx >= 0 {
-					line = remaining[:idx]
-					remaining = remaining[idx+1:]
-				} else {
-					line = remaining
-					remaining = nil
-				}
-				if len(line) == 0 {
-					continue
-				}
-				localCount++
+			measuringNow := measuring.Load()
+			var samples []int64
+			var nowMicros int64
 
-				if measuring.Load() {
-					ts := extractTimestamp(line)
-					if ts > 0 {
-						latencyMicros := time.Now().UnixMicro() - int64(ts*1000)
-						if latencyMicros > 0 && latencyMicros < 3600000000 {
-							stats[gi].conns[ci].hist.RecordValue(latencyMicros)
+			if measuringNow {
+				samples = getLatencySlice()
+				nowMicros = time.Now().UnixMicro()
+			}
+
+			msgCount := 0
+			start := 0
+
+			for start < len(frameBuf) {
+				end := start
+				for end < len(frameBuf) && frameBuf[end] != '\n' {
+					end++
+				}
+
+				if end > start {
+					line := frameBuf[start:end]
+					msgCount++
+
+					if !cs.firstMsg.Load() {
+						cs.firstMsg.Store(true)
+					}
+
+					if measuringNow {
+						ts := extractTimestampInt64(line)
+						if ts > 0 {
+							lat := nowMicros - ts*1000
+							if lat < 1 {
+								lat = 1
+							}
+							samples = append(samples, lat)
 						}
 					}
 				}
+
+				start = end + 1
 			}
 
-			if localCount%2000 == 0 {
-				now := time.Now()
-				if now.Sub(lastFlush) >= 100*time.Millisecond {
-					stats[gi].conns[ci].count.Add(localCount)
-					stats[gi].conns[ci].bytes.Add(localBytes)
-					stats[gi].conns[ci].rawCount.Add(localCount)
-					stats[gi].conns[ci].rawBytes.Add(localBytes)
-					localCount = 0
-					localBytes = 0
-					lastFlush = now
-				}
+			// Warmup: chỉ dùng để ổn định kết nối, không cộng throughput/latency
+			if !measuringNow {
+				continue
+			}
+
+			if msgCount == 0 {
+				putLatencySlice(samples)
+				continue
+			}
+
+			events <- wsFrameEvent{
+				msgCount: int64(msgCount),
+				byteSize: int64(len(frameBuf)),
+				samples:  samples,
 			}
 		}
 
 		conn.CloseNow()
-		time.Sleep(500 * time.Millisecond)
-	}
-}
 
-func extractTimestamp(msg []byte) float64 {
-	idx := bytes.Index(msg, []byte(`"timestamp":`))
-	if idx < 0 {
-		return 0
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	start := idx + len(`"timestamp":`)
-	if start >= len(msg) {
-		return 0
-	}
-	end := start
-	for end < len(msg) && msg[end] != ',' && msg[end] != '}' {
-		end++
-	}
-	val, err := strconv.ParseFloat(string(msg[start:end]), 64)
-	if err != nil {
-		return 0
-	}
-	return val
 }
 
 func connectGRPC(ctx context.Context, gi, ci int, endpoint string, stats []*GroupStats, measuring *atomic.Bool, wg *sync.WaitGroup) {
