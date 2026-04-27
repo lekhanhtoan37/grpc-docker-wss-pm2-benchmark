@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -32,95 +31,52 @@ var (
 func calcPort(base int, instance string) int {
 	idx, err := strconv.Atoi(instance)
 	if err != nil {
+		if len(instance) > 0 {
+			lastChar := instance[len(instance)-1]
+			if digit, err := strconv.Atoi(string(lastChar)); err == nil && digit >= 1 {
+				return base + digit - 1
+			}
+		}
 		return base
 	}
 	return base + idx
 }
 
 const MAX_BACKPRESSURE = 256 * 1024 * 1024
-const WRITE_TIMEOUT = 2 * time.Second
 
 type Client struct {
 	conn     *websocket.Conn
-	sendCh   chan []byte
-	buffered int64
+	mu       sync.Mutex
 	alive    atomic.Bool
 }
 
 func newClient(conn *websocket.Conn) *Client {
-	c := &Client{
-		conn:   conn,
-		sendCh: make(chan []byte, 4000),
-	}
+	c := &Client{conn: conn}
 	c.alive.Store(true)
-	go c.writePump()
 	return c
+}
+
+func (c *Client) writeMessage(ctx context.Context, payload []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.alive.Load() {
+		return nil
+	}
+	err := c.conn.Write(ctx, websocket.MessageText, payload)
+	if err != nil {
+		c.alive.Store(false)
+	}
+	return err
 }
 
 func (c *Client) isAlive() bool {
 	return c.alive.Load()
 }
 
-func (c *Client) markDead() bool {
-	return c.alive.CompareAndSwap(true, false)
-}
-
-func (c *Client) writePump() {
-	for msg := range c.sendCh {
-		ctx, cancel := context.WithTimeout(context.Background(), WRITE_TIMEOUT)
-		err := c.conn.Write(ctx, websocket.MessageText, msg)
-		cancel()
-
-		atomic.AddInt64(&c.buffered, -int64(len(msg)))
-
-		if err != nil {
-			if c.markDead() {
-				_ = c.conn.Close(1001, "write error")
-			}
-			return
-		}
-	}
-}
-
-func (c *Client) trySend(msg []byte) bool {
-	if !c.isAlive() {
-		return false
-	}
-
-	msgSize := int64(len(msg))
-	newBuf := atomic.AddInt64(&c.buffered, msgSize)
-	if newBuf > MAX_BACKPRESSURE {
-		atomic.AddInt64(&c.buffered, -msgSize)
-		return false
-	}
-
-	select {
-	case c.sendCh <- msg:
-		return true
-	default:
-		atomic.AddInt64(&c.buffered, -msgSize)
-		return false
-	}
-}
-
-func (c *Client) closeWithReason(code websocket.StatusCode, reason string) {
-	if !c.markDead() {
-		return
-	}
-	close(c.sendCh)
-	_ = c.conn.Close(code, reason)
-}
-
-func (c *Client) close() {
-	c.alive.Store(false)
-	close(c.sendCh)
-	c.conn.Close(1001, "server shutdown")
-}
-
 type Server struct {
 	clients    map[*Client]bool
 	clientsMu  sync.RWMutex
-	buffer     []string
+	buffer     [][]byte
 	flushMu    sync.Mutex
 	timer      *time.Timer
 	flushing   bool
@@ -130,6 +86,7 @@ type Server struct {
 	msgsOut    int64
 	flushes    int64
 	startTime  time.Time
+	writeCtx   context.Context
 }
 
 func (s *Server) flushToClients() {
@@ -148,36 +105,43 @@ func (s *Server) flushToClients() {
 	s.flushMu.Unlock()
 
 	atomic.AddInt64(&s.flushes, 1)
-	atomic.AddInt64(&s.msgsOut, int64(len(entries)))
-	payload := []byte(strings.Join(entries, "\n"))
 
-	s.clientsMu.Lock()
-	var dead []*Client
+	totalLen := 0
+	for _, e := range entries {
+		totalLen += len(e) + 1
+	}
+	payload := make([]byte, 0, totalLen)
+	for i, e := range entries {
+		payload = append(payload, e...)
+		if i < len(entries)-1 {
+			payload = append(payload, '\n')
+		}
+	}
+	atomic.AddInt64(&s.msgsOut, int64(len(entries)))
+
+	s.clientsMu.RLock()
+	ctx := s.writeCtx
 	for c := range s.clients {
 		if !c.isAlive() {
-			dead = append(dead, c)
 			continue
 		}
-
-		ok := c.trySend(payload)
-		if !ok {
-			dead = append(dead, c)
-		}
+		c.writeMessage(ctx, payload)
 	}
-
-	for _, c := range dead {
-		delete(s.clients, c)
-		c.closeWithReason(1001, "backpressure")
-		log.Printf("[go-ws:%s] conn closed due to backpressure (total: %d)", INSTANCE, len(s.clients))
-	}
-	s.clientsMu.Unlock()
-
-	s.flushMu.Lock()
-	s.flushing = false
-	s.flushMu.Unlock()
+	s.clientsMu.RUnlock()
 }
 
-func (s *Server) appendBatch(entries []string) {
+func (s *Server) removeDeadClients() {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	for c := range s.clients {
+		if !c.isAlive() {
+			delete(s.clients, c)
+			c.conn.Close(websocket.StatusNormalClosure, "dead")
+		}
+	}
+}
+
+func (s *Server) appendBatch(entries [][]byte) {
 	s.flushMu.Lock()
 	atomic.AddInt64(&s.msgsIn, int64(len(entries)))
 	atomic.AddInt64(&s.batchCount, 1)
@@ -187,6 +151,7 @@ func (s *Server) appendBatch(entries []string) {
 	if len(s.buffer) >= BATCH_MAX {
 		s.flushMu.Unlock()
 		s.flushToClients()
+		s.removeDeadClients()
 		return
 	}
 
@@ -196,6 +161,7 @@ func (s *Server) appendBatch(entries []string) {
 			s.timer = nil
 			s.flushMu.Unlock()
 			s.flushToClients()
+			s.removeDeadClients()
 		})
 	}
 	s.flushMu.Unlock()
@@ -218,11 +184,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, _, err := conn.Read(context.Background())
 		if err != nil {
+			c.alive.Store(false)
 			s.clientsMu.Lock()
 			delete(s.clients, c)
 			count = len(s.clients)
 			s.clientsMu.Unlock()
-			c.close()
+			conn.Close(websocket.StatusNormalClosure, "disconnected")
 			log.Printf("[go-ws:%s] conn disconnected (total: %d)", INSTANCE, count)
 			break
 		}
@@ -237,7 +204,7 @@ type consumerHandler struct {
 func (h *consumerHandler) Setup(sarama.ConsumerGroupSession) error   { return nil }
 func (h *consumerHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	entries := make([]string, 0, 4096)
+	entries := make([][]byte, 0, 4096)
 	var lastMsg *sarama.ConsumerMessage
 
 	for {
@@ -263,7 +230,7 @@ func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 			if h.server.shutdown.Load() {
 				return nil
 			}
-			entries = append(entries, string(msg.Value))
+			entries = append(entries, msg.Value)
 			lastMsg = msg
 
 		drain:
@@ -279,7 +246,7 @@ func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 						}
 						return nil
 					}
-					entries = append(entries, string(msg2.Value))
+					entries = append(entries, msg2.Value)
 					lastMsg = msg2
 				default:
 					break drain
@@ -291,7 +258,7 @@ func (h *consumerHandler) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 				if lastMsg != nil {
 					session.MarkMessage(lastMsg, "")
 				}
-				entries = make([]string, 0, 4096)
+				entries = make([][]byte, 0, 4096)
 				lastMsg = nil
 			}
 		}
@@ -361,9 +328,12 @@ func (s *Server) printStats() {
 }
 
 func main() {
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+
 	s := &Server{
 		clients:   make(map[*Client]bool),
 		startTime: time.Now(),
+		writeCtx:  writeCtx,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -379,8 +349,6 @@ func main() {
 	})
 	mux.HandleFunc("/", s.handleWS)
 
-	server := &http.Server{Handler: mux}
-
 	addr := ":" + strconv.Itoa(PORT)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -389,7 +357,7 @@ func main() {
 
 	go func() {
 		log.Printf("[go-ws:%s] Listening on %s", INSTANCE, addr)
-		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[go-ws:%s] Serve failed: %v", INSTANCE, err)
 		}
 	}()
@@ -400,16 +368,17 @@ func main() {
 
 	log.Printf("[go-ws:%s] Shutting down...", INSTANCE)
 	s.shutdown.Store(true)
+	writeCancel()
 	s.flushToClients()
 
 	s.clientsMu.Lock()
 	for c := range s.clients {
-		c.close()
+		c.conn.Close(websocket.StatusNormalClosure, "server shutdown")
 	}
 	s.clientsMu.Unlock()
 
 	cancel()
-	server.Shutdown(context.Background())
+	ln.Close()
 }
 
 func envStr(key, def string) string {
