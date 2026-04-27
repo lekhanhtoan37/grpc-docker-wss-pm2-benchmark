@@ -43,6 +43,7 @@ func calcPort(base int, instance string) int {
 }
 
 const MAX_BACKPRESSURE = 256 * 1024 * 1024
+const WRITE_TIMEOUT = 2 * time.Second
 
 type Client struct {
 	conn     *websocket.Conn
@@ -62,7 +63,9 @@ func (c *Client) writeMessage(payload []byte) error {
 	if !c.alive.Load() {
 		return nil
 	}
-	err := c.conn.Write(context.Background(), websocket.MessageText, payload)
+	ctx, cancel := context.WithTimeout(context.Background(), WRITE_TIMEOUT)
+	err := c.conn.Write(ctx, websocket.MessageText, payload)
+	cancel()
 	if err != nil {
 		c.alive.Store(false)
 	}
