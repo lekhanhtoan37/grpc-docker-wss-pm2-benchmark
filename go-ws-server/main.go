@@ -56,13 +56,13 @@ func newClient(conn *websocket.Conn) *Client {
 	return c
 }
 
-func (c *Client) writeMessage(ctx context.Context, payload []byte) error {
+func (c *Client) writeMessage(payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.alive.Load() {
 		return nil
 	}
-	err := c.conn.Write(ctx, websocket.MessageText, payload)
+	err := c.conn.Write(context.Background(), websocket.MessageText, payload)
 	if err != nil {
 		c.alive.Store(false)
 	}
@@ -86,7 +86,6 @@ type Server struct {
 	msgsOut    int64
 	flushes    int64
 	startTime  time.Time
-	writeCtx   context.Context
 }
 
 func (s *Server) flushToClients() {
@@ -120,12 +119,11 @@ func (s *Server) flushToClients() {
 	atomic.AddInt64(&s.msgsOut, int64(len(entries)))
 
 	s.clientsMu.RLock()
-	ctx := s.writeCtx
 	for c := range s.clients {
 		if !c.isAlive() {
 			continue
 		}
-		c.writeMessage(ctx, payload)
+		c.writeMessage(payload)
 	}
 	s.clientsMu.RUnlock()
 }
@@ -328,12 +326,9 @@ func (s *Server) printStats() {
 }
 
 func main() {
-	writeCtx, writeCancel := context.WithTimeout(context.Background(), 2*time.Second)
-
 	s := &Server{
 		clients:   make(map[*Client]bool),
 		startTime: time.Now(),
-		writeCtx:  writeCtx,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -368,7 +363,6 @@ func main() {
 
 	log.Printf("[go-ws:%s] Shutting down...", INSTANCE)
 	s.shutdown.Store(true)
-	writeCancel()
 	s.flushToClients()
 
 	s.clientsMu.Lock()
