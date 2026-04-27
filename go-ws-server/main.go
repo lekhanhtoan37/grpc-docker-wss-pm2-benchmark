@@ -38,46 +38,62 @@ func calcPort(base int, instance string) int {
 }
 
 const MAX_BACKPRESSURE = 256 * 1024 * 1024
+const WRITE_TIMEOUT = 2 * time.Second
 
 type Client struct {
 	conn     *websocket.Conn
 	sendCh   chan []byte
 	buffered int64
-	alive    bool
+	alive    atomic.Bool
 }
 
 func newClient(conn *websocket.Conn) *Client {
 	c := &Client{
 		conn:   conn,
 		sendCh: make(chan []byte, 4000),
-		alive:  true,
 	}
+	c.alive.Store(true)
 	go c.writePump()
 	return c
 }
 
+func (c *Client) isAlive() bool {
+	return c.alive.Load()
+}
+
+func (c *Client) markDead() bool {
+	return c.alive.CompareAndSwap(true, false)
+}
+
 func (c *Client) writePump() {
 	for msg := range c.sendCh {
+		ctx, cancel := context.WithTimeout(context.Background(), WRITE_TIMEOUT)
+		err := c.conn.Write(ctx, websocket.MessageText, msg)
+		cancel()
+
 		atomic.AddInt64(&c.buffered, -int64(len(msg)))
-		err := c.conn.Write(context.Background(), websocket.MessageText, msg)
+
 		if err != nil {
-			c.alive = false
-			c.conn.Close(1001, "write error")
+			if c.markDead() {
+				_ = c.conn.Close(1001, "write error")
+			}
 			return
 		}
 	}
 }
 
 func (c *Client) trySend(msg []byte) bool {
-	if !c.alive {
+	if !c.isAlive() {
 		return false
 	}
+
 	msgSize := int64(len(msg))
 	newBuf := atomic.AddInt64(&c.buffered, msgSize)
 	if newBuf > MAX_BACKPRESSURE {
 		atomic.AddInt64(&c.buffered, -msgSize)
 		return false
 	}
+
 	select {
 	case c.sendCh <- msg:
 		return true
@@ -87,8 +103,16 @@ func (c *Client) trySend(msg []byte) bool {
 	}
 }
 
+func (c *Client) closeWithReason(code websocket.StatusCode, reason string) {
+	if !c.markDead() {
+		return
+	}
+	close(c.sendCh)
+	_ = c.conn.Close(code, reason)
+}
+
 func (c *Client) close() {
-	c.alive = false
+	c.alive.Store(false)
 	close(c.sendCh)
 	c.conn.Close(1001, "server shutdown")
 }
@@ -130,16 +154,21 @@ func (s *Server) flushToClients() {
 	s.clientsMu.Lock()
 	var dead []*Client
 	for c := range s.clients {
-		if !c.alive {
+		if !c.isAlive() {
 			dead = append(dead, c)
 			continue
 		}
-		c.trySend(payload)
+
+		ok := c.trySend(payload)
+		if !ok {
+			dead = append(dead, c)
+		}
 	}
+
 	for _, c := range dead {
 		delete(s.clients, c)
-		c.close()
-		log.Printf("[go-ws:%s] conn closed (total: %d)", INSTANCE, len(s.clients))
+		c.closeWithReason(1001, "backpressure")
+		log.Printf("[go-ws:%s] conn closed due to backpressure (total: %d)", INSTANCE, len(s.clients))
 	}
 	s.clientsMu.Unlock()
 
