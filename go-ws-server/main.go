@@ -43,37 +43,55 @@ func calcPort(base int, instance string) int {
 }
 
 const MAX_BACKPRESSURE = 256 * 1024 * 1024
-const WRITE_TIMEOUT = 2 * time.Second
+const SEND_CHAN_SIZE = 256
 
 type Client struct {
-	conn     *websocket.Conn
-	mu       sync.Mutex
-	alive    atomic.Bool
+	conn  *websocket.Conn
+	sendCh chan []byte
+	alive  atomic.Bool
 }
 
 func newClient(conn *websocket.Conn) *Client {
-	c := &Client{conn: conn}
+	c := &Client{
+		conn:   conn,
+		sendCh: make(chan []byte, SEND_CHAN_SIZE),
+	}
 	c.alive.Store(true)
+	go c.writePump()
 	return c
 }
 
-func (c *Client) writeMessage(payload []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Client) writePump() {
+	for msg := range c.sendCh {
+		err := c.conn.Write(context.Background(), websocket.MessageText, msg)
+		if err != nil {
+			c.alive.Store(false)
+			return
+		}
+	}
+}
+
+func (c *Client) trySend(msg []byte) bool {
 	if !c.alive.Load() {
-		return nil
+		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), WRITE_TIMEOUT)
-	err := c.conn.Write(ctx, websocket.MessageText, payload)
-	cancel()
-	if err != nil {
+	select {
+	case c.sendCh <- msg:
+		return true
+	default:
 		c.alive.Store(false)
+		return false
 	}
-	return err
 }
 
 func (c *Client) isAlive() bool {
 	return c.alive.Load()
+}
+
+func (c *Client) close() {
+	c.alive.Store(false)
+	close(c.sendCh)
+	c.conn.Close(websocket.StatusNormalClosure, "close")
 }
 
 type Server struct {
@@ -126,7 +144,7 @@ func (s *Server) flushToClients() {
 		if !c.isAlive() {
 			continue
 		}
-		c.writeMessage(payload)
+		c.trySend(payload)
 	}
 	s.clientsMu.RUnlock()
 }
@@ -137,7 +155,7 @@ func (s *Server) removeDeadClients() {
 	for c := range s.clients {
 		if !c.isAlive() {
 			delete(s.clients, c)
-			c.conn.Close(websocket.StatusNormalClosure, "dead")
+			c.close()
 		}
 	}
 }
@@ -370,7 +388,7 @@ func main() {
 
 	s.clientsMu.Lock()
 	for c := range s.clients {
-		c.conn.Close(websocket.StatusNormalClosure, "server shutdown")
+		c.close()
 	}
 	s.clientsMu.Unlock()
 
