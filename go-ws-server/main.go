@@ -22,7 +22,7 @@ var (
 	BROKER    = envStr("KAFKA_BROKER", "192.168.0.9:9091")
 	TOPIC     = envStr("KAFKA_TOPIC", "benchmark-messages")
 	INSTANCE  = envStr("NODE_APP_INSTANCE", envStr("CONTAINER_ID", envStr("HOSTNAME", strconv.Itoa(os.Getpid()))))
-	PORT      = calcPort(BASE_PORT, INSTANCE)
+	PORT      = envInt("LISTEN_PORT", calcPort(BASE_PORT, INSTANCE))
 	GROUP_ID  = envStr("GROUP_ID", "go-ws-benchmark-worker-"+INSTANCE)
 	BATCH_MAX = envInt("BATCH_MAX", 20)
 	LINGER_MS = envInt("LINGER_MS", 5)

@@ -5,6 +5,7 @@ services:
     network_mode: host
     environment:
       CONTAINER_ID: "host-1"
+      LISTEN_PORT: "60071"
       PORT: "60071"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
@@ -15,6 +16,7 @@ services:
     network_mode: host
     environment:
       CONTAINER_ID: "host-2"
+      LISTEN_PORT: "60072"
       PORT: "60072"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
@@ -25,6 +27,7 @@ services:
     network_mode: host
     environment:
       CONTAINER_ID: "host-3"
+      LISTEN_PORT: "60073"
       PORT: "60073"
       KAFKA_BROKER: "192.168.0.9:9091"
       KAFKA_TOPIC: "benchmark-messages"
