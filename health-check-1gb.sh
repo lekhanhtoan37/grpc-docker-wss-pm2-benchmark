@@ -109,7 +109,7 @@ echo ""
 echo "--- NATS ---"
 echo -n "  NATS status: "
 if NATS_INFO=$(curl -sf http://localhost:8222/varz 2>/dev/null); then
-  NATS_VER=$(echo "$NATS_INFO" | jq -r '.version // "unknown"' 2>/dev/null)
+  NATS_VER=$(echo "$NATS_INFO" | jq -r '.version // "unknown"' 2>/dev/null) || NATS_VER="unknown"
   echo "OK (v$NATS_VER)"
   PASS=$((PASS + 1))
 else
