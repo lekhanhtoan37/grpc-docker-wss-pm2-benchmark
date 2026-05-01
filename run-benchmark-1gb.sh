@@ -338,8 +338,8 @@ else
   echo "Writing nats.conf..."
   sudo tee "${NATS_DIR}/nats.conf" > /dev/null <<CONF
 listen: "0.0.0.0:4222"
-monitor: "0.0.0.0:8222"
-max_payload: 1MB
+http_port: 8222
+max_payload: 1048576
 write_deadline: "10s"
 max_connections: 65536
 max_subscriptions: 0
