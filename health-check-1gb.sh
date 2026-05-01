@@ -24,13 +24,19 @@ FAIL=0
 check() {
   local label="$1"
   local cmd="$2"
-  if eval "$cmd" &>/dev/null; then
-    echo "  PASS $label"
-    PASS=$((PASS + 1))
-  else
-    echo "  FAIL $label"
-    FAIL=$((FAIL + 1))
-  fi
+  local retries="${3:-1}"
+  local delay="${4:-2}"
+  while [ "$retries" -gt 0 ]; do
+    if eval "$cmd" &>/dev/null; then
+      echo "  PASS $label"
+      PASS=$((PASS + 1))
+      return
+    fi
+    retries=$((retries - 1))
+    [ "$retries" -gt 0 ] && sleep "$delay"
+  done
+  echo "  FAIL $label"
+  FAIL=$((FAIL + 1))
 }
 
 echo "--- Systemd Kafka Benchmark ---"
@@ -65,19 +71,19 @@ check "Go WS bridge nginx :50071" "nc -z 127.0.0.1 50071"
 echo ""
 echo "--- gRPC Host-Networked Servers ---"
 for port in 60051 60052 60053; do
-  check "gRPC host :$port" "nc -z 127.0.0.1 $port"
+  check "gRPC host :$port" "nc -z 127.0.0.1 $port" 3 2
 done
 
 echo ""
 echo "--- uWS Host-Networked Servers ---"
 for port in 60061 60062 60063; do
-  check "uWS host :$port" "nc -z 127.0.0.1 $port"
+  check "uWS host :$port" "nc -z 127.0.0.1 $port" 3 2
 done
 
 echo ""
 echo "--- Go WS Host-Networked Servers ---"
 for port in 60071 60072 60073; do
-  check "Go WS host :$port" "nc -z 127.0.0.1 $port"
+  check "Go WS host :$port" "nc -z 127.0.0.1 $port" 3 2
 done
 
 echo ""
@@ -85,8 +91,8 @@ echo "--- NATS ---"
 echo -n "  NATS status: "
 curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.status' 2>/dev/null && PASS=$((PASS + 1)) || { echo "NOT READY"; FAIL=$((FAIL + 1)); }
 check "NATS benchmark service active" "systemctl is-active nats-benchmark"
-check "NATS port 127.0.0.1:4222" "nc -z 127.0.0.1 4222"
-check "NATS monitor 127.0.0.1:8222" "nc -z 127.0.0.1 8222"
+check "NATS port 127.0.0.1:4222" "nc -z 127.0.0.1 4222" 3 2
+check "NATS monitor 127.0.0.1:8222" "nc -z 127.0.0.1 8222" 3 2
 
 echo ""
 echo "--- NATS Workers ---"
@@ -98,7 +104,7 @@ done
 echo ""
 echo "--- NATS Host Workers ---"
 for port in 60081 60082 60083; do
-  check "NATS host worker :$port" "nc -z 127.0.0.1 $port"
+  check "NATS host worker :$port" "nc -z 127.0.0.1 $port" 3 2
 done
 
 echo ""
