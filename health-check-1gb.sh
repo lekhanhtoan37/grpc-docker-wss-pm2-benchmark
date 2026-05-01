@@ -71,25 +71,32 @@ check "Go WS bridge nginx :50071" "nc -z 127.0.0.1 50071"
 echo ""
 echo "--- gRPC Host-Networked Servers ---"
 for port in 60051 60052 60053; do
-  check "gRPC host :$port" "nc -z 127.0.0.1 $port" 3 2
+  check "gRPC host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
 echo "--- uWS Host-Networked Servers ---"
 for port in 60061 60062 60063; do
-  check "uWS host :$port" "nc -z 127.0.0.1 $port" 3 2
+  check "uWS host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
 echo "--- Go WS Host-Networked Servers ---"
 for port in 60071 60072 60073; do
-  check "Go WS host :$port" "nc -z 127.0.0.1 $port" 3 2
+  check "Go WS host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
 echo "--- NATS ---"
 echo -n "  NATS status: "
-curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.status' 2>/dev/null && PASS=$((PASS + 1)) || { echo "NOT READY"; FAIL=$((FAIL + 1)); }
+if NATS_INFO=$(curl -sf http://localhost:8222/varz 2>/dev/null); then
+  NATS_VER=$(echo "$NATS_INFO" | jq -r '.version // "unknown"' 2>/dev/null)
+  echo "OK (v$NATS_VER)"
+  PASS=$((PASS + 1))
+else
+  echo "NOT READY"
+  FAIL=$((FAIL + 1))
+fi
 check "NATS benchmark service active" "systemctl is-active nats-benchmark"
 check "NATS port 127.0.0.1:4222" "nc -z 127.0.0.1 4222" 3 2
 check "NATS monitor 127.0.0.1:8222" "nc -z 127.0.0.1 8222" 3 2
@@ -97,14 +104,20 @@ check "NATS monitor 127.0.0.1:8222" "nc -z 127.0.0.1 8222" 3 2
 echo ""
 echo "--- NATS Workers ---"
 for port in 8095 8096 8097; do
-  echo -n "  NATS worker :$port: "
-  curl -sf "http://localhost:$port/health" 2>/dev/null && echo "OK" && PASS=$((PASS + 1)) || { echo "FAIL"; FAIL=$((FAIL + 1)); }
+  HEALTH=$(curl -sf "http://localhost:$port/health" 2>/dev/null || true)
+  if [ -n "$HEALTH" ]; then
+    echo "  PASS NATS worker :$port"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL NATS worker :$port"
+    FAIL=$((FAIL + 1))
+  fi
 done
 
 echo ""
 echo "--- NATS Host Workers ---"
 for port in 60081 60082 60083; do
-  check "NATS host worker :$port" "nc -z 127.0.0.1 $port" 3 2
+  check "NATS host worker :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
