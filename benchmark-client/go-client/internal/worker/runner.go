@@ -42,9 +42,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	groups := make([]stats.Group, len(resp.Groups))
 	for i, ga := range resp.Groups {
 		groups[i] = stats.Group{
-			Name:      ga.Name,
-			Type:      ga.Type,
-			Endpoints: ga.Endpoints,
+			Name:       ga.Name,
+			Type:       ga.Type,
+			Endpoints:  ga.Endpoints,
+			Subject:    ga.Subject,
+			QueueGroup: ga.QueueGroup,
 		}
 	}
 
@@ -67,6 +69,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			totalConns++
 			if g.Type == "ws" {
 				go ConnectWS(connCtx, g, gi, ci, endpoint, allStats, &measuring, &wg)
+			} else if g.Type == "nats" {
+				go ConnectNATS(connCtx, g, gi, ci, endpoint, allStats, &measuring, &wg)
 			} else {
 				go ConnectGRPC(connCtx, g, gi, ci, endpoint, allStats, &measuring, &wg)
 			}

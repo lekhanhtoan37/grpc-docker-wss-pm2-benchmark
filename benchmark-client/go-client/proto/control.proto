@@ -26,6 +26,8 @@ message GroupAssignment {
   string type = 2;
   repeated string endpoints = 3;
   int32 connections = 4;
+  string subject = 5;
+  string queue_group = 6;
 }
 
 message SnapshotRequest {

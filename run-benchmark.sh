@@ -38,6 +38,15 @@ echo "--- Step 2b: Installing producer deps ---"
 npm install --silent --prefix "$BASEDIR/producer"
 
 echo ""
+echo "--- Step 2c: Verifying NATS ---"
+if ! curl -sf http://localhost:8222/healthz > /dev/null 2>&1; then
+  echo "Starting NATS..."
+  cd "$BASEDIR/infra" && docker compose up -d nats
+  echo "Waiting 5s for NATS startup..."
+  sleep 5
+fi
+
+echo ""
 echo "--- Step 3: Starting gRPC servers ---"
 cd "$BASEDIR/grpc-server" && docker compose up -d --build
 cd "$BASEDIR"
@@ -58,6 +67,17 @@ if ! pm2 describe ws-benchmark &>/dev/null; then
   npm install --silent
   pm2 start ecosystem.config.js
   echo "Waiting 5s for WS workers..."
+  sleep 5
+fi
+cd "$BASEDIR"
+
+echo ""
+echo "--- Step 4b: Starting NATS workers ---"
+cd "$BASEDIR/nats-worker"
+if ! pm2 describe nats-benchmark &>/dev/null; then
+  go build -o nats-worker .
+  pm2 start ecosystem.config.js
+  echo "Waiting 5s for NATS workers..."
   sleep 5
 fi
 cd "$BASEDIR"

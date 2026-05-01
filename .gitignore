@@ -47,6 +47,8 @@ Thumbs.db
 coverage/
 .nyc_output/
 go-ws-server/go-ws-server
+nats-worker/nats-worker
+nats-bench/nats-bench
 benchmark-client/go-client/benchmark-client
 benchmark-client/go-client/coordinator
 benchmark-client/go-client/worker

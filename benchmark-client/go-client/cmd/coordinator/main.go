@@ -38,6 +38,9 @@ func main() {
 		{Name: "Go WS host", Type: "ws", Endpoints: []string{"ws://127.0.0.1:60071", "ws://127.0.0.1:60072", "ws://127.0.0.1:60073"}},
 		{Name: "gRPC bridge", Type: "grpc", Endpoints: []string{"localhost:50051", "localhost:50051", "localhost:50051"}},
 		{Name: "gRPC host", Type: "grpc", Endpoints: []string{"localhost:60051", "localhost:60052", "localhost:60053"}},
+		{Name: "NATS bridge", Type: "nats", Endpoints: []string{"nats://localhost:4222"}, Subject: "benchmark.messages", QueueGroup: "nats-bridge"},
+		{Name: "NATS host", Type: "nats", Endpoints: []string{"nats://localhost:4222", "nats://localhost:4222", "nats://localhost:4222"}, Subject: "benchmark.messages", QueueGroup: "nats-host"},
+		{Name: "NATS PM2", Type: "nats", Endpoints: []string{"nats://localhost:4222", "nats://localhost:4222", "nats://localhost:4222"}, Subject: "benchmark.messages", QueueGroup: "nats-pm2"},
 	}
 
 	sharded := coordinator.ShardGroups(groups, *workers)
@@ -46,10 +49,12 @@ func main() {
 	for i, shard := range sharded {
 		for _, g := range shard {
 			pbShards[i] = append(pbShards[i], pb.GroupAssignment{
-				Name:        g.Name,
-				Type:        g.Type,
-				Endpoints:   g.Endpoints,
+				Name:       g.Name,
+				Type:       g.Type,
+				Endpoints:  g.Endpoints,
 				Connections: int32(*conns),
+				Subject:    g.Subject,
+				QueueGroup: g.QueueGroup,
 			})
 		}
 	}

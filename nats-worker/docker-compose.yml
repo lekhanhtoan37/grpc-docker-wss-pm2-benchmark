@@ -1,0 +1,43 @@
+services:
+  nats-worker-1:
+    build: .
+    container_name: nats-bridge-1
+    environment:
+      CONTAINER_ID: "bridge-1"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://benchmark-nats:4222"
+      NATS_SUBJECT: "benchmark.messages"
+      PORT: "8095"
+    networks:
+      - backend
+
+  nats-worker-2:
+    build: .
+    container_name: nats-bridge-2
+    environment:
+      CONTAINER_ID: "bridge-2"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://benchmark-nats:4222"
+      NATS_SUBJECT: "benchmark.messages"
+      PORT: "8095"
+    networks:
+      - backend
+
+  nats-worker-3:
+    build: .
+    container_name: nats-bridge-3
+    environment:
+      CONTAINER_ID: "bridge-3"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://benchmark-nats:4222"
+      NATS_SUBJECT: "benchmark.messages"
+      PORT: "8095"
+    networks:
+      - backend
+
+networks:
+  backend:
+    external: true

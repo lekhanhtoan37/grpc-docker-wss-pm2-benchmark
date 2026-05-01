@@ -28,3 +28,19 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+  nats:
+    image: nats:2-alpine
+    container_name: benchmark-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command:
+      - "--max_payload=1048576"
+      - "--write_deadline=10s"
+      - "--net=0.0.0.0"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

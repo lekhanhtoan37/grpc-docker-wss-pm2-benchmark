@@ -1,0 +1,36 @@
+services:
+  nats-worker-host-1:
+    build: .
+    container_name: nats-worker-host-1
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-1"
+      PORT: "60081"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://localhost:4222"
+      NATS_SUBJECT: "benchmark.messages"
+
+  nats-worker-host-2:
+    build: .
+    container_name: nats-worker-host-2
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-2"
+      PORT: "60082"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://localhost:4222"
+      NATS_SUBJECT: "benchmark.messages"
+
+  nats-worker-host-3:
+    build: .
+    container_name: nats-worker-host-3
+    network_mode: host
+    environment:
+      CONTAINER_ID: "host-3"
+      PORT: "60083"
+      KAFKA_BROKER: "192.168.0.9:9091"
+      KAFKA_TOPIC: "benchmark-messages"
+      NATS_URL: "nats://localhost:4222"
+      NATS_SUBJECT: "benchmark.messages"

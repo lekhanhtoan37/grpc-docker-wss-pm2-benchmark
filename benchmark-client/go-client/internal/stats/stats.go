@@ -7,9 +7,11 @@ import (
 )
 
 type Group struct {
-	Name      string
-	Type      string
-	Endpoints []string
+	Name       string
+	Type       string
+	Endpoints  []string
+	Subject    string
+	QueueGroup string
 }
 
 type ConnStats struct {

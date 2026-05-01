@@ -51,6 +51,12 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 echo ""
+echo "--- NATS ---"
+check "NATS container" "docker ps | grep benchmark-nats"
+echo -n "  NATS status: "
+curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.status' 2>/dev/null && PASS=$((PASS + 1)) || { echo "NOT READY"; FAIL=$((FAIL + 1)); }
+
+echo ""
 echo "--- PM2 WS ---"
 check "PM2 ws-benchmark" "pm2 describe ws-benchmark"
 
