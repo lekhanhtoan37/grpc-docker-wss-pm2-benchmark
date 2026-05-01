@@ -48,6 +48,11 @@ KAFKA_SERVICE="kafka-benchmark"
 KAFKA_PORT=9091
 KAFKA_CONTROLLER_PORT=9093
 
+NATS_VERSION="2.11.4"
+NATS_DIR="/opt/nats-benchmark"
+NATS_USER="nats-bench"
+NATS_SERVICE="nats-benchmark"
+
 mkdir -p "$RESULTS_DIR"
 
 echo ""
@@ -294,6 +299,116 @@ else
 fi
 
 # ──────────────────────────────────────────────
+# Step 1c: Setup NATS server (idempotent)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 1c: NATS benchmark setup ---"
+
+if systemctl is-active --quiet "$NATS_SERVICE" 2>/dev/null && nc -z 127.0.0.1 4222 2>/dev/null; then
+  echo "NATS benchmark already running on 127.0.0.1:4222. Skipping setup."
+else
+  echo "NATS benchmark not running. Setting up..."
+
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    x86_64)  NATS_ARCH="amd64" ;;
+    aarch64) NATS_ARCH="arm64" ;;
+    *)       echo "ERROR: Unsupported architecture: $ARCH"; exit 1 ;;
+  esac
+
+  sudo mkdir -p "$NATS_DIR"
+
+  if [ ! -f "${NATS_DIR}/nats-server" ]; then
+    echo "Downloading NATS server v${NATS_VERSION} (${NATS_ARCH})..."
+    NATS_TAR="nats-server-v${NATS_VERSION}-linux-${NATS_ARCH}.tar.gz"
+    curl -fSL -o "/tmp/${NATS_TAR}" "https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/${NATS_TAR}"
+    sudo tar -xzf "/tmp/${NATS_TAR}" -C "${NATS_DIR}/" --strip-components=1
+    rm -f "/tmp/${NATS_TAR}"
+    sudo chmod +x "${NATS_DIR}/nats-server"
+    echo "NATS server extracted to ${NATS_DIR}"
+  else
+    echo "NATS binary ${NATS_DIR}/nats-server exists. Skipping download."
+  fi
+
+  if ! id "${NATS_USER}" &>/dev/null; then
+    sudo useradd -r -s /sbin/nologin "${NATS_USER}"
+    echo "User ${NATS_USER} created."
+  fi
+
+  echo "Writing nats.conf..."
+  sudo tee "${NATS_DIR}/nats.conf" > /dev/null <<CONF
+listen: "0.0.0.0:4222"
+monitor: "0.0.0.0:8222"
+max_payload: 1MB
+write_deadline: "10s"
+max_connections: 65536
+max_subscriptions: 0
+max_control_line: 4096
+CONF
+
+  sudo chown -R "${NATS_USER}:${NATS_USER}" "${NATS_DIR}"
+
+  if [ ! -f "/etc/systemd/system/${NATS_SERVICE}.service" ]; then
+    echo "Installing systemd service..."
+    sudo tee "/etc/systemd/system/${NATS_SERVICE}.service" > /dev/null <<SVC
+[Unit]
+Description=NATS Benchmark Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${NATS_USER}
+Group=${NATS_USER}
+ExecStart=${NATS_DIR}/nats-server -c ${NATS_DIR}/nats.conf
+ExecStop=/bin/kill -s SIGUSR2 \$MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target
+SVC
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$NATS_SERVICE"
+  else
+    echo "Systemd service already installed."
+    sudo systemctl daemon-reload
+  fi
+
+  echo "Starting ${NATS_SERVICE}..."
+  sudo systemctl restart "$NATS_SERVICE"
+
+  echo "Waiting 5s for NATS startup..."
+  sleep 5
+
+  if systemctl is-active --quiet "$NATS_SERVICE" 2>/dev/null; then
+    echo "NATS benchmark: active"
+  else
+    echo "ERROR: NATS benchmark failed to start."
+    echo "Check: sudo journalctl -u ${NATS_SERVICE} -n 50"
+    exit 1
+  fi
+fi
+
+if nc -z 127.0.0.1 4222 2>/dev/null; then
+  echo "Port 127.0.0.1:4222 (NATS client): open"
+else
+  echo "ERROR: Port 127.0.0.1:4222 not open."
+  exit 1
+fi
+
+if nc -z 127.0.0.1 8222 2>/dev/null; then
+  echo "Port 127.0.0.1:8222 (NATS monitor): open"
+else
+  echo "ERROR: Port 127.0.0.1:8222 not open."
+  exit 1
+fi
+
+echo "NATS version: $(curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.version' 2>/dev/null || echo 'unknown')"
+
+# ──────────────────────────────────────────────
 # Step 2: Create topic (idempotent)
 # ──────────────────────────────────────────────
 echo ""
@@ -437,6 +552,44 @@ for port in 8092 8093 8094; do
   fi
 done
 
+echo ""
+echo "--- Step 4g: Start nats-worker (PM2) ---"
+cd "$BASEDIR/nats-worker"
+PATH="$RESOLVED_PATH" go mod tidy
+PATH="$RESOLVED_PATH" GOTOOLCHAIN=local go build -o nats-worker .
+echo "nats-worker binary: $(ls -lh nats-worker | awk '{print $5, $6, $7, $8}')"
+run_pm2 describe nats-benchmark &>/dev/null && run_pm2 delete nats-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for nats-worker PM2 instances..."
+sleep 5
+echo "Verifying nats-worker PM2 ports..."
+for port in 8095 8096 8097; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
+
+echo ""
+echo "--- Step 4h: Build + start nats-worker (Docker host) ---"
+cd "$BASEDIR/nats-worker"
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
+docker compose -f docker-compose.host.yml build --no-cache
+docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "Waiting 5s for nats-worker host containers..."
+sleep 5
+echo "Verifying nats-worker host ports..."
+for port in 60081 60082 60083; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
+
 # ──────────────────────────────────────────────
 # Step 5: Health check
 # ──────────────────────────────────────────────
@@ -472,7 +625,8 @@ echo "--- Container Kafka consumer status ---"
   BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
   BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
   for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
-           $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3; do
+           $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3 \
+           nats-worker-host-1 nats-worker-host-2 nats-worker-host-3; do
   CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -cE "Kafka consumer (connected|ready)" || true)
   echo "  $c: consumer_ready=$CONSUMER_READY"
   if [ "$CONSUMER_READY" -eq 0 ]; then
@@ -519,6 +673,7 @@ echo "  Stopping PM2 apps..."
 run_pm2 stop ws-benchmark 2>/dev/null || true
 run_pm2 stop uws-benchmark 2>/dev/null || true
 run_pm2 stop go-ws-benchmark 2>/dev/null || true
+run_pm2 stop nats-benchmark 2>/dev/null || true
 echo "  Stopping Docker containers..."
 cd "$BASEDIR/grpc-server" && docker compose down 2>/dev/null || true
 cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
@@ -526,11 +681,11 @@ cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
 cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
 cd "$BASEDIR/go-ws-server" && docker compose down 2>/dev/null || true
 cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
-cd "$BASEDIR"
+cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
 sleep 3
 
 echo "  Deleting consumer groups..."
-CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark|go-ws-benchmark" || true)
+CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|uws-benchmark|grpc-benchmark|go-ws-benchmark|nats-benchmark-worker" || true)
 for cg in $CONSUMER_GROUPS; do
   "${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --delete --group "$cg" 2>/dev/null || true
 done
@@ -553,6 +708,8 @@ cd "$BASEDIR/uws-server"
 run_pm2 start ecosystem.config.js
 cd "$BASEDIR/go-ws-server"
 run_pm2 start ecosystem.config.js
+cd "$BASEDIR/nats-worker"
+run_pm2 start ecosystem.config.js
 cd "$BASEDIR"
 echo "  Restarting Docker containers..."
 cd "$BASEDIR/grpc-server" && docker compose up -d
@@ -561,6 +718,7 @@ cd "$BASEDIR/uws-server" && docker compose up -d
 cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml up -d
 cd "$BASEDIR/go-ws-server" && docker compose up -d
 cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml up -d
 cd "$BASEDIR"
 echo "  Waiting 10s for consumers to rejoin..."
 sleep 10
@@ -607,8 +765,13 @@ cleanup() {
   cd "$BASEDIR/grpc-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   cd "$BASEDIR/uws-server" && docker compose down 2>/dev/null || true
   cd "$BASEDIR/uws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+  cd "$BASEDIR/go-ws-server" && docker compose down 2>/dev/null || true
+  cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+  cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
   run_pm2 stop ws-benchmark 2>/dev/null || true
   run_pm2 stop uws-benchmark 2>/dev/null || true
+  run_pm2 stop go-ws-benchmark 2>/dev/null || true
+  run_pm2 stop nats-benchmark 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -634,7 +797,8 @@ for CONNS in $SCENARIOS; do
     BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
     for c in $BRIDGE_GRPC_CONTAINERS grpc-host-1 grpc-host-2 grpc-host-3 \
              $BRIDGE_UWS_CONTAINERS uws-host-1 uws-host-2 uws-host-3 \
-             $BRIDGE_GOWS_CONTAINERS go-ws-host-1 go-ws-host-2 go-ws-host-3; do
+             $BRIDGE_GOWS_CONTAINERS go-ws-host-1 go-ws-host-2 go-ws-host-3 \
+             nats-worker-host-1 nats-worker-host-2 nats-worker-host-3; do
       echo "  === $c (last 10 lines) ==="
       docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
     done
@@ -644,6 +808,8 @@ for CONNS in $SCENARIOS; do
     run_pm2 logs uws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
     echo "  === Go WS server (pm2 logs, last 10 lines) ==="
     run_pm2 logs go-ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "  === nats-worker (pm2 logs, last 10 lines) ==="
+    run_pm2 logs nats-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
     echo "--- End server diagnostics ---"
 
     CLIENT_LOG="$RESULTS_DIR/client-conns${CONNS}-run${run}-${TIMESTAMP}.log"
@@ -707,6 +873,8 @@ for CONNS in $SCENARIOS; do
       cd "$BASEDIR/go-ws-server"
       docker compose down 2>/dev/null || true
       docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      cd "$BASEDIR/nats-worker"
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
       sleep 2
       cd "$BASEDIR/grpc-server"
       docker compose up -d
@@ -716,6 +884,8 @@ for CONNS in $SCENARIOS; do
       docker compose -f docker-compose.host.yml up -d
       cd "$BASEDIR/go-ws-server"
       docker compose up -d
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR/nats-worker"
       docker compose -f docker-compose.host.yml up -d
       cd "$BASEDIR"
       echo "Waiting 15s for containers + Kafka consumers..."
@@ -738,6 +908,9 @@ echo "--- Step 8: Collect system info ---"
   echo "PM2: $(npx pm2 --version 2>/dev/null || echo 'not found')"
   echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
   echo "Kafka benchmark port: 192.168.0.9:${KAFKA_PORT}"
+  echo "NATS benchmark: systemd ($(systemctl is-active nats-benchmark 2>/dev/null || echo 'unknown'))"
+  echo "NATS server info:"
+  curl -sf http://localhost:8222/varz 2>/dev/null | jq '{version, connections, subscriptions}' 2>/dev/null || echo "  NATS monitor unavailable"
   echo ""
   echo "=== Topic Info ==="
   "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
@@ -748,14 +921,24 @@ echo "--- Step 8: Collect system info ---"
   echo "=== PM2 Metrics (uWS) ==="
   run_pm2 show uws-benchmark 2>/dev/null || true
   echo ""
+  echo "=== PM2 Metrics (Go WS) ==="
+  run_pm2 show go-ws-benchmark 2>/dev/null || true
+  echo ""
+  echo "=== PM2 Metrics (nats-worker) ==="
+  run_pm2 show nats-benchmark 2>/dev/null || true
+  echo ""
   echo "=== Docker Stats ==="
   BRIDGE_GRPC_CONTAINERS=$(docker ps --filter "name=grpc-server-grpc" --format '{{.Names}}' | sort)
   BRIDGE_UWS_CONTAINERS=$(docker ps --filter "name=uws-server-uws-" --format '{{.Names}}' | sort)
+  BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
   docker stats --no-stream \
     $BRIDGE_GRPC_CONTAINERS \
     grpc-host-1 grpc-host-2 grpc-host-3 \
     $BRIDGE_UWS_CONTAINERS \
     uws-host-1 uws-host-2 uws-host-3 \
+    $BRIDGE_GOWS_CONTAINERS \
+    go-ws-host-1 go-ws-host-2 go-ws-host-3 \
+    nats-worker-host-1 nats-worker-host-2 nats-worker-host-3 \
     2>/dev/null || true
   echo ""
   echo "=== Disk Info ==="

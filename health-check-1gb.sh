@@ -81,10 +81,32 @@ for port in 60071 60072 60073; do
 done
 
 echo ""
+echo "--- NATS ---"
+echo -n "  NATS status: "
+curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.status' 2>/dev/null && PASS=$((PASS + 1)) || { echo "NOT READY"; FAIL=$((FAIL + 1)); }
+check "NATS benchmark service active" "systemctl is-active nats-benchmark"
+check "NATS port 127.0.0.1:4222" "nc -z 127.0.0.1 4222"
+check "NATS monitor 127.0.0.1:8222" "nc -z 127.0.0.1 8222"
+
+echo ""
+echo "--- NATS Workers ---"
+for port in 8095 8096 8097; do
+  echo -n "  NATS worker :$port: "
+  curl -sf "http://localhost:$port/health" 2>/dev/null && echo "OK" && PASS=$((PASS + 1)) || { echo "FAIL"; FAIL=$((FAIL + 1)); }
+done
+
+echo ""
+echo "--- NATS Host Workers ---"
+for port in 60081 60082 60083; do
+  check "NATS host worker :$port" "nc -z 127.0.0.1 $port"
+done
+
+echo ""
 echo "--- PM2 WS/uWS/Go WS ---"
 check "PM2 ws-benchmark" "run_as_user npx pm2 describe ws-benchmark"
 check "PM2 uws-benchmark" "run_as_user npx pm2 describe uws-benchmark"
 check "PM2 go-ws-benchmark" "run_as_user npx pm2 describe go-ws-benchmark"
+check "PM2 nats-benchmark" "run_as_user npx pm2 describe nats-benchmark"
 
 echo ""
 echo "--- WS/uWS/Go WS Connectivity ---"
@@ -116,6 +138,7 @@ check "uWS host containers" "docker ps | grep uws-host-1"
 check "Go WS bridge replicas" "docker ps | grep 'go-ws-server-go-ws-'"
 check "Go WS bridge nginx" "docker ps | grep 'go-ws-server-nginx'"
 check "Go WS host containers" "docker ps | grep go-ws-host-1"
+check "NATS host containers" "docker ps | grep nats-worker-host-1"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
