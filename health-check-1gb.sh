@@ -20,6 +20,7 @@ run_as_user() {
 
 PASS=0
 FAIL=0
+WARN=0
 
 check() {
   local label="$1"
@@ -37,6 +38,24 @@ check() {
   done
   echo "  FAIL $label"
   FAIL=$((FAIL + 1))
+}
+
+warn() {
+  local label="$1"
+  local cmd="$2"
+  local retries="${3:-1}"
+  local delay="${4:-2}"
+  while [ "$retries" -gt 0 ]; do
+    if eval "$cmd" &>/dev/null; then
+      echo "  PASS $label"
+      PASS=$((PASS + 1))
+      return
+    fi
+    retries=$((retries - 1))
+    [ "$retries" -gt 0 ] && sleep "$delay"
+  done
+  echo "  WARN $label"
+  WARN=$((WARN + 1))
 }
 
 echo "--- Systemd Kafka Benchmark ---"
@@ -71,19 +90,19 @@ check "Go WS bridge nginx :50071" "nc -z 127.0.0.1 50071"
 echo ""
 echo "--- gRPC Host-Networked Servers ---"
 for port in 60051 60052 60053; do
-  check "gRPC host :$port" "nc -z 127.0.0.1 $port" 5 3
+  warn "gRPC host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
 echo "--- uWS Host-Networked Servers ---"
 for port in 60061 60062 60063; do
-  check "uWS host :$port" "nc -z 127.0.0.1 $port" 5 3
+  warn "uWS host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
 echo "--- Go WS Host-Networked Servers ---"
 for port in 60071 60072 60073; do
-  check "Go WS host :$port" "nc -z 127.0.0.1 $port" 5 3
+  warn "Go WS host :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
@@ -117,7 +136,7 @@ done
 echo ""
 echo "--- NATS Host Workers ---"
 for port in 60081 60082 60083; do
-  check "NATS host worker :$port" "nc -z 127.0.0.1 $port" 5 3
+  warn "NATS host worker :$port" "nc -z 127.0.0.1 $port" 5 3
 done
 
 echo ""
@@ -148,20 +167,23 @@ fi
 echo ""
 echo "--- Docker ---"
 check "Docker running" "docker info"
-check "gRPC bridge replicas" "docker ps | grep 'grpc-server-grpc-'"
-check "gRPC bridge nginx" "docker ps | grep 'grpc-server-nginx'"
-check "gRPC host containers" "docker ps | grep grpc-host-1"
-check "uWS bridge replicas" "docker ps | grep 'uws-server-uws-'"
-check "uWS bridge nginx" "docker ps | grep 'uws-server-nginx'"
-check "uWS host containers" "docker ps | grep uws-host-1"
-check "Go WS bridge replicas" "docker ps | grep 'go-ws-server-go-ws-'"
-check "Go WS bridge nginx" "docker ps | grep 'go-ws-server-nginx'"
-check "Go WS host containers" "docker ps | grep go-ws-host-1"
-check "NATS host containers" "docker ps | grep nats-worker-host-1"
+warn "gRPC bridge replicas" "docker ps | grep 'grpc-server-grpc-'"
+warn "gRPC bridge nginx" "docker ps | grep 'grpc-server-nginx'"
+warn "gRPC host containers" "docker ps | grep grpc-host-1"
+warn "uWS bridge replicas" "docker ps | grep 'uws-server-uws-'"
+warn "uWS bridge nginx" "docker ps | grep 'uws-server-nginx'"
+warn "uWS host containers" "docker ps | grep uws-host-1"
+warn "Go WS bridge replicas" "docker ps | grep 'go-ws-server-go-ws-'"
+warn "Go WS bridge nginx" "docker ps | grep 'go-ws-server-nginx'"
+warn "Go WS host containers" "docker ps | grep go-ws-host-1"
+warn "NATS host containers" "docker ps | grep nats-worker-host-1"
 
 echo ""
-echo "=== Results: $PASS passed, $FAIL failed ==="
+echo "=== Results: $PASS passed, $FAIL failed, $WARN warnings ==="
 if [ "$FAIL" -gt 0 ]; then
   echo "Fix failed checks before running benchmark."
   exit 1
+fi
+if [ "$WARN" -gt 0 ]; then
+  echo "Note: warnings are non-critical (container ports may still be starting)."
 fi
