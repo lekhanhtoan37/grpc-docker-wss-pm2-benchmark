@@ -1,0 +1,884 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "=== WS + NATS Benchmark ==="
+
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+
+PM2_USER="${SUDO_USER:-$(whoami)}"
+PM2_HOME_USER="$(getent passwd "$PM2_USER" | cut -d: -f6)"
+NVM_DIR="${PM2_HOME_USER}/.nvm"
+NODE_PATH=""
+if [ -d "$NVM_DIR/versions/node" ]; then
+  NODE_PATH="$(ls -td "$NVM_DIR"/versions/node/*/bin 2>/dev/null | head -1)"
+fi
+RESOLVED_PATH="${NODE_PATH:+$NODE_PATH:}${PATH}"
+for gopath in /usr/local/go/bin "${PM2_HOME_USER}/go/bin" "${PM2_HOME_USER}/.local/bin"; do
+  [ -d "$gopath" ] && RESOLVED_PATH="${RESOLVED_PATH}:${gopath}"
+done
+
+echo "Node: $(PATH="$RESOLVED_PATH" node --version), npm: $(PATH="$RESOLVED_PATH" npm --version 2>/dev/null || echo 'N/A'), Go: $(PATH="$RESOLVED_PATH" go version 2>/dev/null || echo 'N/A')"
+
+run_as_user() {
+  sudo -u "$PM2_USER" env PATH="${RESOLVED_PATH}" PM2_HOME="${PM2_HOME_USER}/.pm2" "$@"
+}
+
+run_pm2() {
+  run_as_user npx pm2 "$@"
+}
+
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+WARMUP="${WARMUP:-30}"
+DURATION="${DURATION:-120}"
+RUNS="${RUNS:-1}"
+TARGET_MBPS="${TARGET_MBPS:-1000}"
+NUM_PRODUCERS="${NUM_PRODUCERS:-10}"
+SCENARIOS="${SCENARIOS:-3 30 90}"
+DISTRIBUTED_WORKERS="${DISTRIBUTED_WORKERS:-0}"
+COORDINATOR_PORT="${COORDINATOR_PORT:-50000}"
+RESULTS_DIR="$BASEDIR/results"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+KAFKA_VERSION="3.9.2"
+SCALA_VERSION="2.13"
+KAFKA_DIR="/opt/kafka-benchmark"
+KAFKA_DATA="/data/kafka-benchmark"
+KAFKA_USER="kafka-bench"
+KAFKA_SERVICE="kafka-benchmark"
+KAFKA_PORT=9091
+KAFKA_CONTROLLER_PORT=9093
+
+NATS_VERSION="2.11.4"
+NATS_DIR="/opt/nats-benchmark"
+NATS_USER="nats-bench"
+NATS_SERVICE="nats-benchmark"
+
+mkdir -p "$RESULTS_DIR"
+
+echo ""
+echo "--- Step 0: Install system dependencies ---"
+DEPS_NEEDED=false
+for pkg in build-essential python3 make g++; do
+  if ! dpkg -s "$pkg" &>/dev/null; then
+    DEPS_NEEDED=true
+    break
+  fi
+done
+if [ "$DEPS_NEEDED" = true ]; then
+  echo "Installing build-essential, python3, make, g++..."
+  apt update && apt install -y build-essential python3 make g++
+else
+  echo "Build dependencies already installed."
+fi
+
+# ──────────────────────────────────────────────
+# Step 1: Setup Kafka (idempotent)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 1: Kafka benchmark setup ---"
+
+if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null && nc -z 192.168.0.9 "$KAFKA_PORT" 2>/dev/null; then
+  echo "Kafka benchmark already running on 192.168.0.9:$KAFKA_PORT. Skipping setup."
+else
+  echo "Kafka benchmark not running. Setting up..."
+
+  if ! java -version 2>&1 | grep -q "17\|21"; then
+    echo "Installing OpenJDK 17..."
+    if command -v apt &>/dev/null; then
+      sudo apt update && sudo apt install -y openjdk-17-jdk-headless
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y java-17-openjdk-devel
+    else
+      echo "ERROR: Unsupported package manager. Install Java 17+ manually."
+      exit 1
+    fi
+  fi
+
+  if [ ! -d "${KAFKA_DIR}" ]; then
+    echo "Downloading Kafka ${KAFKA_VERSION}..."
+    local_tar="kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz"
+    local_url="https://downloads.apache.org/kafka/${KAFKA_VERSION}/${local_tar}"
+    curl -fSL -o "${local_tar}" "${local_url}"
+    file_size=$(stat -c%s "${local_tar}" 2>/dev/null || stat -f%z "${local_tar}" 2>/dev/null || echo 0)
+    if [ "$file_size" -lt 1000000 ]; then
+      echo "ERROR: Downloaded file too small (${file_size} bytes). URL may be wrong."
+      echo "URL: ${local_url}"
+      echo "Try available versions: https://downloads.apache.org/kafka/"
+      rm -f "${local_tar}"
+      exit 1
+    fi
+    sudo tar -xzf "${local_tar}" -C /opt/
+    sudo ln -s "/opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION}" "${KAFKA_DIR}"
+    rm -f "${local_tar}"
+    echo "Kafka extracted to ${KAFKA_DIR}"
+  else
+    echo "Kafka dir ${KAFKA_DIR} exists. Skipping download."
+  fi
+
+  if ! id "${KAFKA_USER}" &>/dev/null; then
+    sudo useradd -r -s /sbin/nologin "${KAFKA_USER}"
+    echo "User ${KAFKA_USER} created."
+  fi
+
+  sudo mkdir -p "${KAFKA_DATA}"
+  KAFKA_REAL_DIR="$(readlink -f "${KAFKA_DIR}")"
+  sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_REAL_DIR}"
+  sudo chown -R "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
+
+  echo "Writing server.properties (host: 192.168.0.9)..."
+  sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
+node.id=1
+process.roles=broker,controller
+listeners=PLAINTEXT://192.168.0.9:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://192.168.0.9:9091
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+controller.quorum.voters=1@127.0.0.1:9093
+log.dirs=/data/kafka-benchmark
+
+socket.send.buffer.bytes=1048576
+socket.receive.buffer.bytes=1048576
+socket.request.max.bytes=104857600
+
+log.segment.bytes=104857600
+num.partitions=12
+log.retention.ms=600000
+log.retention.bytes=1073741824
+log.cleanup.policy=delete
+log.cleanup.interval.ms=10000
+
+num.network.threads=8
+num.io.threads=8
+num.recovery.threads.per.data.dir=2
+
+delete.topic.enable=true
+auto.create.topics.enable=false
+
+group.coordinator.new.enable=false
+offsets.topic.replication.factor=1
+PROPS
+
+  if [ ! -f "${KAFKA_DATA}/meta.properties" ]; then
+    echo "Formatting KRaft storage..."
+    KAFKA_CLUSTER_ID=$(sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" random-uuid)
+    echo "Cluster ID: ${KAFKA_CLUSTER_ID}"
+    sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" format \
+      -t "$KAFKA_CLUSTER_ID" \
+      -c "${KAFKA_DIR}/config/kraft/server.properties"
+  else
+    echo "KRaft storage already formatted. Skipping."
+  fi
+
+  if [ ! -f "/etc/systemd/system/${KAFKA_SERVICE}.service" ]; then
+    echo "Installing systemd service..."
+    sudo tee "/etc/systemd/system/${KAFKA_SERVICE}.service" > /dev/null <<SVC
+[Unit]
+Description=Benchmark Kafka Broker (KRaft Mode)
+Documentation=https://kafka.apache.org/documentation/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${KAFKA_USER}
+Group=${KAFKA_USER}
+Environment="KAFKA_HEAP_OPTS=-Xmx4G -Xms4G"
+Environment="KAFKA_JVM_PERFORMANCE_OPTS=-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20"
+ExecStart=${KAFKA_DIR}/bin/kafka-server-start.sh ${KAFKA_DIR}/config/kraft/server.properties
+ExecStop=${KAFKA_DIR}/bin/kafka-server-stop.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target
+SVC
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$KAFKA_SERVICE"
+  else
+    echo "Systemd service already installed."
+    sudo systemctl daemon-reload
+  fi
+
+  echo "Starting ${KAFKA_SERVICE}..."
+  sudo systemctl restart "$KAFKA_SERVICE"
+  echo "Waiting 10s for Kafka startup..."
+  sleep 10
+
+  if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null; then
+    echo "Kafka benchmark: active"
+  else
+    echo "ERROR: Kafka benchmark failed to start."
+    echo "Check: sudo journalctl -u ${KAFKA_SERVICE} -n 50"
+    exit 1
+  fi
+fi
+
+# ──────────────────────────────────────────────
+# Step 1b: Always update config + restart
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Updating server.properties (host: 192.168.0.9) ---"
+sudo tee "${KAFKA_DIR}/config/kraft/server.properties" > /dev/null <<PROPS
+node.id=1
+process.roles=broker,controller
+listeners=PLAINTEXT://192.168.0.9:9091,CONTROLLER://127.0.0.1:9093
+advertised.listeners=PLAINTEXT://192.168.0.9:9091
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+controller.quorum.voters=1@127.0.0.1:9093
+log.dirs=/data/kafka-benchmark
+
+socket.send.buffer.bytes=1048576
+socket.receive.buffer.bytes=1048576
+socket.request.max.bytes=104857600
+
+log.segment.bytes=104857600
+num.partitions=12
+log.retention.ms=600000
+log.retention.bytes=1073741824
+log.cleanup.policy=delete
+log.cleanup.interval.ms=10000
+
+num.network.threads=8
+num.io.threads=8
+num.recovery.threads.per.data.dir=2
+
+delete.topic.enable=true
+auto.create.topics.enable=false
+
+group.coordinator.new.enable=false
+offsets.topic.replication.factor=1
+PROPS
+
+echo "Stopping Kafka and cleaning KRaft data..."
+sudo systemctl stop "$KAFKA_SERVICE" 2>/dev/null || true
+sleep 2
+sudo rm -rf "${KAFKA_DATA}"/*
+sudo chown "${KAFKA_USER}:${KAFKA_USER}" "${KAFKA_DATA}"
+
+echo "Formatting KRaft storage..."
+KAFKA_CLUSTER_ID=$(sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" random-uuid)
+echo "Cluster ID: ${KAFKA_CLUSTER_ID}"
+sudo -u "${KAFKA_USER}" "${KAFKA_DIR}/bin/kafka-storage.sh" format \
+  -t "$KAFKA_CLUSTER_ID" \
+  -c "${KAFKA_DIR}/config/kraft/server.properties"
+
+echo "Starting ${KAFKA_SERVICE}..."
+sudo systemctl start "$KAFKA_SERVICE"
+echo "Waiting 15s for Kafka startup..."
+sleep 15
+
+if systemctl is-active --quiet "$KAFKA_SERVICE" 2>/dev/null; then
+  echo "Kafka benchmark: active"
+else
+  echo "ERROR: Kafka benchmark failed to start."
+  echo "Check: sudo journalctl -u ${KAFKA_SERVICE} -n 50"
+  exit 1
+fi
+
+echo "Listeners:"
+sudo netstat -ntpl 2>/dev/null | grep 9091 || ss -ntpl | grep 9091
+
+if nc -z 192.168.0.9 "$KAFKA_PORT" 2>/dev/null; then
+  echo "Port 192.168.0.9:${KAFKA_PORT}: open"
+else
+  echo "ERROR: Port 192.168.0.9:${KAFKA_PORT} not open."
+  exit 1
+fi
+
+# ──────────────────────────────────────────────
+# Step 1c: Setup NATS server (idempotent)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 1c: NATS benchmark setup ---"
+
+if systemctl is-active --quiet "$NATS_SERVICE" 2>/dev/null && nc -z 127.0.0.1 4222 2>/dev/null; then
+  echo "NATS benchmark already running on 127.0.0.1:4222. Skipping setup."
+else
+  echo "NATS benchmark not running. Setting up..."
+
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    x86_64)  NATS_ARCH="amd64" ;;
+    aarch64) NATS_ARCH="arm64" ;;
+    *)       echo "ERROR: Unsupported architecture: $ARCH"; exit 1 ;;
+  esac
+
+  sudo mkdir -p "$NATS_DIR"
+
+  if [ ! -f "${NATS_DIR}/nats-server" ]; then
+    echo "Downloading NATS server v${NATS_VERSION} (${NATS_ARCH})..."
+    NATS_TAR="nats-server-v${NATS_VERSION}-linux-${NATS_ARCH}.tar.gz"
+    curl -fSL -o "/tmp/${NATS_TAR}" "https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/${NATS_TAR}"
+    sudo tar -xzf "/tmp/${NATS_TAR}" -C "${NATS_DIR}/" --strip-components=1
+    rm -f "/tmp/${NATS_TAR}"
+    sudo chmod +x "${NATS_DIR}/nats-server"
+    echo "NATS server extracted to ${NATS_DIR}"
+  else
+    echo "NATS binary ${NATS_DIR}/nats-server exists. Skipping download."
+  fi
+
+  if ! id "${NATS_USER}" &>/dev/null; then
+    sudo useradd -r -s /sbin/nologin "${NATS_USER}"
+    echo "User ${NATS_USER} created."
+  fi
+
+  echo "Writing nats.conf..."
+  sudo tee "${NATS_DIR}/nats.conf" > /dev/null <<CONF
+listen: "0.0.0.0:4222"
+http_port: 8222
+max_payload: 1048576
+write_deadline: "10s"
+max_connections: 65536
+max_subscriptions: 0
+max_control_line: 4096
+CONF
+
+  sudo chown -R "${NATS_USER}:${NATS_USER}" "${NATS_DIR}"
+
+  if [ ! -f "/etc/systemd/system/${NATS_SERVICE}.service" ]; then
+    echo "Installing systemd service..."
+    sudo tee "/etc/systemd/system/${NATS_SERVICE}.service" > /dev/null <<SVC
+[Unit]
+Description=NATS Benchmark Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${NATS_USER}
+Group=${NATS_USER}
+ExecStart=${NATS_DIR}/nats-server -c ${NATS_DIR}/nats.conf
+ExecStop=/bin/kill -s SIGUSR2 \$MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target
+SVC
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$NATS_SERVICE"
+  else
+    echo "Systemd service already installed."
+    sudo systemctl daemon-reload
+  fi
+
+  echo "Starting ${NATS_SERVICE}..."
+  sudo systemctl restart "$NATS_SERVICE"
+  echo "Waiting 5s for NATS startup..."
+  sleep 5
+
+  if systemctl is-active --quiet "$NATS_SERVICE" 2>/dev/null; then
+    echo "NATS benchmark: active"
+  else
+    echo "ERROR: NATS benchmark failed to start."
+    echo "Check: sudo journalctl -u ${NATS_SERVICE} -n 50"
+    exit 1
+  fi
+fi
+
+if nc -z 127.0.0.1 4222 2>/dev/null; then
+  echo "Port 127.0.0.1:4222 (NATS client): open"
+else
+  echo "ERROR: Port 127.0.0.1:4222 not open."
+  exit 1
+fi
+
+if nc -z 127.0.0.1 8222 2>/dev/null; then
+  echo "Port 127.0.0.1:8222 (NATS monitor): open"
+else
+  echo "ERROR: Port 127.0.0.1:8222 not open."
+  exit 1
+fi
+
+echo "NATS version: $(curl -sf http://localhost:8222/varz 2>/dev/null | jq -r '.version' 2>/dev/null || echo 'unknown')"
+
+# ──────────────────────────────────────────────
+# Step 2: Create topic (idempotent)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 2: Verify benchmark topic ---"
+if "${KAFKA_DIR}/bin/kafka-topics.sh" --describe \
+    --topic benchmark-messages \
+    --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null; then
+  echo "Topic benchmark-messages exists."
+else
+  echo "Creating topic benchmark-messages (12 partitions)..."
+  "${KAFKA_DIR}/bin/kafka-topics.sh" --create \
+    --topic benchmark-messages \
+    --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+    --partitions 12 \
+    --replication-factor 1 \
+    --config retention.ms=120000 \
+    --config segment.bytes=104857600 \
+    --config retention.bytes=1073741824 \
+    --config max.message.bytes=10485760 \
+    --config min.insync.replicas=1 \
+    --if-not-exists
+  "${KAFKA_DIR}/bin/kafka-topics.sh" --describe \
+    --topic benchmark-messages \
+    --bootstrap-server "192.168.0.9:${KAFKA_PORT}"
+fi
+
+# ──────────────────────────────────────────────
+# Step 3: iptables for Docker host → Kafka
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 3: Setup iptables ---"
+sudo iptables -D INPUT -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
+sudo iptables -D INPUT -s 172.16.0.0/12 -d 192.168.0.9 -p tcp --dport 9091 -j ACCEPT 2>/dev/null || true
+sudo iptables -I INPUT 1 -s 172.16.0.0/12 -d 192.168.0.9 -p tcp --dport 9091 -j ACCEPT
+echo "iptables: allow 172.16.0.0/12 → 192.168.0.9:9091"
+
+# ──────────────────────────────────────────────
+# Step 4a: Start WS servers (PM2)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4a: Start WS servers (PM2) ---"
+cd "$BASEDIR/ws-server"
+run_as_user npm install --silent
+run_pm2 describe ws-benchmark &>/dev/null && run_pm2 delete ws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for WS workers..."
+sleep 5
+
+# ──────────────────────────────────────────────
+# Step 4b: Build + start Go WS servers (Docker)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4b: Build + start Go WS servers (Docker) ---"
+cd "$BASEDIR/go-ws-server"
+docker compose down 2>/dev/null || true
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
+docker compose build --no-cache
+docker compose -f docker-compose.host.yml build --no-cache
+docker compose up -d
+cd "$BASEDIR"
+echo "Waiting 10s for Go WS bridge containers..."
+sleep 10
+
+cd "$BASEDIR/go-ws-server"
+docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "Waiting 5s for Go WS host containers..."
+sleep 5
+
+# ──────────────────────────────────────────────
+# Step 4c: Start Go WS servers (PM2)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4c: Start Go WS servers (PM2) ---"
+cd "$BASEDIR/go-ws-server"
+PATH="$RESOLVED_PATH" go mod tidy
+PATH="$RESOLVED_PATH" GOTOOLCHAIN=local go build -o go-ws-server .
+echo "Go WS binary: $(ls -lh go-ws-server | awk '{print $5, $6, $7, $8}')"
+run_pm2 describe go-ws-benchmark &>/dev/null && run_pm2 delete go-ws-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for Go WS workers..."
+sleep 5
+echo "Verifying Go WS ports..."
+for port in 8092 8093 8094; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
+
+# ──────────────────────────────────────────────
+# Step 4d: Start nats-worker (PM2)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4d: Start nats-worker (PM2) ---"
+cd "$BASEDIR/nats-worker"
+PATH="$RESOLVED_PATH" go mod tidy
+PATH="$RESOLVED_PATH" GOTOOLCHAIN=local go build -o nats-worker .
+echo "nats-worker binary: $(ls -lh nats-worker | awk '{print $5, $6, $7, $8}')"
+run_pm2 describe nats-benchmark &>/dev/null && run_pm2 delete nats-benchmark 2>/dev/null || true
+run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "Waiting 5s for nats-worker PM2 instances..."
+sleep 5
+echo "Verifying nats-worker PM2 ports..."
+for port in 8095 8096 8097; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
+
+# ──────────────────────────────────────────────
+# Step 4e: Build + start nats-worker (Docker host)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 4e: Build + start nats-worker (Docker host) ---"
+cd "$BASEDIR/nats-worker"
+docker compose -f docker-compose.host.yml down 2>/dev/null || true
+docker compose -f docker-compose.host.yml build --no-cache
+docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "Waiting 5s for nats-worker host containers..."
+sleep 5
+echo "Verifying nats-worker host ports..."
+for port in 60081 60082 60083; do
+  if ss -ntpl | grep -q ":${port} "; then
+    echo "  :${port} OK"
+  else
+    echo "  :${port} NOT LISTENING"
+  fi
+done
+
+# ──────────────────────────────────────────────
+# Step 5: Health check (inline)
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 5: Health check ---"
+HC_PASS=0
+HC_FAIL=0
+
+hc() {
+  local label="$1"
+  local cmd="$2"
+  if eval "$cmd" &>/dev/null; then
+    echo "  PASS $label"
+    HC_PASS=$((HC_PASS + 1))
+  else
+    echo "  WARN $label"
+    HC_FAIL=$((HC_FAIL + 1))
+  fi
+}
+
+echo "--- Kafka ---"
+hc "Kafka systemd" "systemctl is-active kafka-benchmark"
+hc "Kafka :9091" "nc -z 192.168.0.9 9091"
+
+echo "--- NATS ---"
+hc "NATS systemd" "systemctl is-active nats-benchmark"
+hc "NATS :4222" "nc -z 127.0.0.1 4222"
+hc "NATS :8222" "nc -z 127.0.0.1 8222"
+
+echo "--- PM2 ---"
+hc "WS :8090" "ss -ntpl | grep ':8090 '"
+hc "Go WS :8092" "ss -ntpl | grep ':8092 '"
+hc "NATS worker :8095" "ss -ntpl | grep ':8095 '"
+
+echo "--- Docker host ---"
+hc "Go WS host :60071" "ss -ntpl | grep ':60071 '"
+hc "NATS host :60081" "ss -ntpl | grep ':60081 '"
+
+echo "--- Results: $HC_PASS passed, $HC_FAIL warnings ---"
+
+# ──────────────────────────────────────────────
+# Step 6: Install deps + build Go client
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 6: Install deps + build Go client ---"
+PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/benchmark-client"
+PATH="$RESOLVED_PATH" npm install --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" npm rebuild --prefix "$BASEDIR/producer"
+PATH="$RESOLVED_PATH" command -v go >/dev/null || { echo "ERROR: go not found. Install Go: https://go.dev/dl/"; exit 1; }
+echo "Building Go benchmark client..."
+(cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o benchmark-client .)
+echo "Go binary: $(ls -lh "$BASEDIR/benchmark-client/go-client/benchmark-client" | awk '{print $5, $6, $7, $8}')"
+
+if [ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null; then
+  echo "Building distributed binaries (coordinator + $DISTRIBUTED_WORKERS workers)..."
+  (cd "$BASEDIR/benchmark-client/go-client" && PATH="$RESOLVED_PATH" go build -o coordinator ./cmd/coordinator/ && PATH="$RESOLVED_PATH" go build -o worker ./cmd/worker/)
+  echo "Coordinator: $(ls -lh "$BASEDIR/benchmark-client/go-client/coordinator" | awk '{print $5}')"
+  echo "Worker: $(ls -lh "$BASEDIR/benchmark-client/go-client/worker" | awk '{print $5}')"
+fi
+
+# ──────────────────────────────────────────────
+# Step 6b: Check container readiness
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Container Kafka consumer status ---"
+BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
+for c in $BRIDGE_GOWS_CONTAINERS go-ws-host-1 go-ws-host-2 go-ws-host-3 \
+         nats-worker-host-1 nats-worker-host-2 nats-worker-host-3; do
+  CONSUMER_READY=$(docker logs "$c" 2>&1 | grep -cE "Kafka consumer (connected|ready)" || true)
+  echo "  $c: consumer_ready=$CONSUMER_READY"
+  if [ "$CONSUMER_READY" -eq 0 ]; then
+    echo "    Last 5 lines:"
+    docker logs "$c" 2>&1 | tail -5 | sed 's/^/      /'
+  fi
+done
+
+# ──────────────────────────────────────────────
+# Step 6c: Quick Kafka verify
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Quick Kafka verify: produce + consume 1 message ---"
+VERIFY_TOPIC="__bench_verify_$$"
+"${KAFKA_DIR}/bin/kafka-topics.sh" --create \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+  --partitions 1 --replication-factor 1 \
+  --config retention.ms=60000 \
+  --if-not-exists 2>/dev/null || true
+echo "test-message-$(date +%s)" | "${KAFKA_DIR}/bin/kafka-console-producer.sh" \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+  --property "parse.key=false" 2>/dev/null
+VERIFY_MSG=$("${KAFKA_DIR}/bin/kafka-console-consumer.sh" \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+  --from-beginning --max-messages 1 --timeout-ms 10000 2>/dev/null | head -1)
+if [ -n "$VERIFY_MSG" ]; then
+  echo "  PASS Kafka produce+consume verified: '$VERIFY_MSG'"
+else
+  echo "  WARN Kafka consume returned empty (broker may still be settling)"
+fi
+"${KAFKA_DIR}/bin/kafka-topics.sh" --delete \
+  --topic "$VERIFY_TOPIC" \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
+
+# ──────────────────────────────────────────────
+# Step 6d: Stop consumers, reset topic, restart
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Resetting topic (stop consumers first) ---"
+echo "  Stopping PM2 apps..."
+run_pm2 stop ws-benchmark 2>/dev/null || true
+run_pm2 stop go-ws-benchmark 2>/dev/null || true
+run_pm2 stop nats-benchmark 2>/dev/null || true
+echo "  Stopping Docker containers..."
+cd "$BASEDIR/go-ws-server" && docker compose down 2>/dev/null || true
+cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+sleep 3
+
+echo "  Deleting consumer groups..."
+CONSUMER_GROUPS=$("${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --list 2>/dev/null | grep -E "ws-benchmark|go-ws-benchmark|nats-benchmark-worker" || true)
+for cg in $CONSUMER_GROUPS; do
+  "${KAFKA_DIR}/bin/kafka-consumer-groups.sh" --bootstrap-server "192.168.0.9:${KAFKA_PORT}" --delete --group "$cg" 2>/dev/null || true
+done
+
+echo "  Deleting topic benchmark-messages..."
+"${KAFKA_DIR}/bin/kafka-topics.sh" --delete --topic benchmark-messages --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
+sleep 2
+echo "  Creating topic benchmark-messages (12 partitions)..."
+"${KAFKA_DIR}/bin/kafka-topics.sh" --create \
+  --topic benchmark-messages \
+  --bootstrap-server "192.168.0.9:${KAFKA_PORT}" \
+  --partitions 12 --replication-factor 1 \
+  --config retention.ms=600000 \
+  --config cleanup.policy=delete 2>/dev/null || true
+
+echo "  Restarting PM2 apps..."
+cd "$BASEDIR/ws-server" && run_pm2 start ecosystem.config.js
+cd "$BASEDIR/go-ws-server" && run_pm2 start ecosystem.config.js
+cd "$BASEDIR/nats-worker" && run_pm2 start ecosystem.config.js
+cd "$BASEDIR"
+echo "  Restarting Docker containers..."
+cd "$BASEDIR/go-ws-server" && docker compose up -d
+cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml up -d
+cd "$BASEDIR"
+echo "  Waiting 10s for consumers to rejoin..."
+sleep 10
+echo "  Topic reset done."
+
+# ──────────────────────────────────────────────
+# Step 7: Run benchmark
+# ──────────────────────────────────────────────
+PRODUCER_PIDS=""
+
+start_producer() {
+  echo ""
+  echo "--- Starting $NUM_PRODUCERS producers (target: ${TARGET_MBPS} MB/s each) ---"
+  PRODUCER_PIDS=""
+  for i in $(seq 1 "$NUM_PRODUCERS"); do
+    env PATH="$RESOLVED_PATH" KAFKA_BROKER=192.168.0.9:${KAFKA_PORT} TARGET_MBPS="$TARGET_MBPS" \
+      node --max-old-space-size=16384 "$BASEDIR/producer/producer-rdkafka.js" &
+    PRODUCER_PIDS="$PRODUCER_PIDS $!"
+  done
+  echo "Producer PIDs:$PRODUCER_PIDS"
+  echo "Waiting 5s for producers to ramp up..."
+  sleep 5
+}
+
+stop_producer() {
+  for pid in $PRODUCER_PIDS; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in $PRODUCER_PIDS; do
+    wait "$pid" 2>/dev/null || true
+  done
+  PRODUCER_PIDS=""
+}
+
+cleanup() {
+  echo ""
+  echo "--- Cleanup ---"
+  stop_producer
+  pkill -f "coordinator.*-listen" 2>/dev/null || true
+  pkill -f "worker.*-coordinator" 2>/dev/null || true
+  cd "$BASEDIR/go-ws-server" && docker compose down 2>/dev/null || true
+  cd "$BASEDIR/go-ws-server" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+  cd "$BASEDIR/nats-worker" && docker compose -f docker-compose.host.yml down 2>/dev/null || true
+  run_pm2 stop ws-benchmark 2>/dev/null || true
+  run_pm2 stop go-ws-benchmark 2>/dev/null || true
+  run_pm2 stop nats-benchmark 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo ""
+echo "--- Step 7: Running benchmark scenarios: $SCENARIOS connections, $RUNS run(s) each ---"
+
+SCENARIO_NUM=0
+TOTAL_SCENARIOS=$(echo $SCENARIOS | wc -w | tr -d ' ')
+
+for CONNS in $SCENARIOS; do
+  SCENARIO_NUM=$((SCENARIO_NUM + 1))
+  for run in $(seq 1 "$RUNS"); do
+    echo ""
+    echo "================================================================"
+    echo "=== Scenario $SCENARIO_NUM/$TOTAL_SCENARIOS: ${CONNS} conns/group, Run $run/$RUNS ($(date)) ==="
+    echo "================================================================"
+
+    start_producer
+
+    echo "--- Server diagnostics (after producers started) ---"
+    BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
+    for c in $BRIDGE_GOWS_CONTAINERS go-ws-host-1 go-ws-host-2 go-ws-host-3 \
+             nats-worker-host-1 nats-worker-host-2 nats-worker-host-3; do
+      echo "  === $c (last 10 lines) ==="
+      docker logs "$c" --tail 10 2>&1 | sed 's/^/    /'
+    done
+    echo "  === WS server (pm2 logs, last 10 lines) ==="
+    run_pm2 logs ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "  === Go WS server (pm2 logs, last 10 lines) ==="
+    run_pm2 logs go-ws-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "  === nats-worker (pm2 logs, last 10 lines) ==="
+    run_pm2 logs nats-benchmark --nostream --lines 10 2>&1 | sed 's/^/    /' || true
+    echo "--- End server diagnostics ---"
+
+    CLIENT_LOG="$RESULTS_DIR/client-conns${CONNS}-run${run}-${TIMESTAMP}.log"
+    if [ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null; then
+      echo "--- Running distributed benchmark: coordinator + $DISTRIBUTED_WORKERS workers ---"
+      GO_DIR="$BASEDIR/benchmark-client/go-client"
+
+      "$GO_DIR/coordinator" \
+        -workers "$DISTRIBUTED_WORKERS" \
+        -warmup "$WARMUP" \
+        -duration "$DURATION" \
+        -conns "$CONNS" \
+        -listen ":${COORDINATOR_PORT}" \
+        > "$RESULTS_DIR/coordinator-conns${CONNS}-run${run}-${TIMESTAMP}.log" 2>&1 &
+      COORD_PID=$!
+      echo "Coordinator PID=$COORD_PID on :${COORDINATOR_PORT}"
+      sleep 2
+
+      WORKER_PIDS=""
+      for wi in $(seq 1 "$DISTRIBUTED_WORKERS"); do
+        "$GO_DIR/worker" \
+          -coordinator "localhost:${COORDINATOR_PORT}" \
+          -worker-id "worker-${wi}" \
+          > "$RESULTS_DIR/worker${wi}-conns${CONNS}-run${run}-${TIMESTAMP}.log" 2>&1 &
+        WORKER_PIDS="$WORKER_PIDS $!"
+      done
+      echo "Worker PIDs:$WORKER_PIDS"
+
+      wait "$COORD_PID" 2>/dev/null || true
+      for wpid in $WORKER_PIDS; do
+        wait "$wpid" 2>/dev/null || true
+      done
+
+      cat "$RESULTS_DIR/coordinator-conns${CONNS}-run${run}-${TIMESTAMP}.log" | tee "$CLIENT_LOG"
+    else
+      "$BASEDIR/benchmark-client/go-client/benchmark-client" \
+        --warmup "$WARMUP" --duration "$DURATION" --conns "$CONNS" \
+        2>&1 | tee "$CLIENT_LOG"
+    fi
+    echo "Client log: $CLIENT_LOG"
+    echo ""
+
+    stop_producer
+
+    RESTART_NEEDED=false
+    if [ "$run" -lt "$RUNS" ]; then
+      RESTART_NEEDED=true
+    fi
+    if [ "$SCENARIO_NUM" -lt "$TOTAL_SCENARIOS" ]; then
+      RESTART_NEEDED=true
+    fi
+
+    if [ "$RESTART_NEEDED" = true ]; then
+      echo "Restarting Docker containers for next scenario..."
+      cd "$BASEDIR/go-ws-server"
+      docker compose down 2>/dev/null || true
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      cd "$BASEDIR/nats-worker"
+      docker compose -f docker-compose.host.yml down 2>/dev/null || true
+      sleep 2
+      cd "$BASEDIR/go-ws-server"
+      docker compose up -d
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR/nats-worker"
+      docker compose -f docker-compose.host.yml up -d
+      cd "$BASEDIR"
+      echo "Waiting 15s for containers + Kafka consumers..."
+      sleep 15
+    fi
+  done
+done
+
+# ──────────────────────────────────────────────
+# Step 8: Collect system info
+# ──────────────────────────────────────────────
+echo ""
+echo "--- Step 8: Collect system info ---"
+{
+  echo "=== System Info ==="
+  echo "Date: $(date)"
+  echo "Kernel: $(uname -a)"
+  echo "Node: $(node --version)"
+  echo "Docker: $(docker --version)"
+  echo "PM2: $(npx pm2 --version 2>/dev/null || echo 'not found')"
+  echo "Kafka benchmark: systemd ($(systemctl is-active kafka-benchmark))"
+  echo "Kafka benchmark port: 192.168.0.9:${KAFKA_PORT}"
+  echo "NATS benchmark: systemd ($(systemctl is-active nats-benchmark 2>/dev/null || echo 'unknown'))"
+  echo "NATS server info:"
+  curl -sf http://localhost:8222/varz 2>/dev/null | jq '{version, connections, subscriptions}' 2>/dev/null || echo "  NATS monitor unavailable"
+  echo ""
+  echo "=== Topic Info ==="
+  "${KAFKA_DIR}/bin/kafka-topics.sh" --describe --topic benchmark-messages --bootstrap-server "192.168.0.9:${KAFKA_PORT}" 2>/dev/null || true
+  echo ""
+  echo "=== PM2 Metrics (WS) ==="
+  run_pm2 show ws-benchmark 2>/dev/null || true
+  echo ""
+  echo "=== PM2 Metrics (Go WS) ==="
+  run_pm2 show go-ws-benchmark 2>/dev/null || true
+  echo ""
+  echo "=== PM2 Metrics (nats-worker) ==="
+  run_pm2 show nats-benchmark 2>/dev/null || true
+  echo ""
+  echo "=== Docker Stats ==="
+  BRIDGE_GOWS_CONTAINERS=$(docker ps --filter "name=go-ws-server-go-ws-" --format '{{.Names}}' | sort)
+  docker stats --no-stream \
+    $BRIDGE_GOWS_CONTAINERS \
+    go-ws-host-1 go-ws-host-2 go-ws-host-3 \
+    nats-worker-host-1 nats-worker-host-2 nats-worker-host-3 \
+    2>/dev/null || true
+  echo ""
+  echo "=== Disk Info ==="
+  df -h "${KAFKA_DATA}" 2>/dev/null || df -h .
+} > "$RESULTS_DIR/system-info-${TIMESTAMP}.log"
+
+echo ""
+echo "=== Benchmark complete ==="
+echo "Results: $RESULTS_DIR/"
+echo "Runs: $RUNS x ${DURATION}s measurement"
+echo "Conns/group: $CONNS"
+echo "Mode: $([ "$DISTRIBUTED_WORKERS" -gt 0 ] 2>/dev/null && echo "distributed ($DISTRIBUTED_WORKERS workers)" || echo "single-process")"
+echo "Producer target: ${TARGET_MBPS} MB/s"
